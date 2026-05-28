@@ -255,6 +255,11 @@ async def _fetch_posts(
         await asyncio.sleep(1.3)
         scrolls += 1
 
+    # Sort newest-first so the most recently posted content is always at the top.
+    # X's timeline order is not strictly chronological (pinned posts, retweets,
+    # and algorithmic mixing can interleave old and new content).
+    posts.sort(key=lambda p: p.get("posted_at") or "", reverse=True)
+
     return {"posts": posts, "stopped_by": stopped_by, "last_post_date": last_old_date}
 
 
