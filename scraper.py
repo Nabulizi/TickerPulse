@@ -146,6 +146,71 @@ def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
         return None
 
 
+_NUM_RE = re.compile(r'([\d,.]+)\s*([KMB]?)', re.IGNORECASE)
+_MULT = {"": 1, "K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
+
+
+def _to_int(token: str) -> Optional[int]:
+    """Parse engagement strings like '1,234', '12.3K', '4M' into ints."""
+    if not token:
+        return None
+    m = _NUM_RE.search(token.strip())
+    if not m:
+        return None
+    try:
+        return int(float(m.group(1).replace(",", "")) * _MULT[m.group(2).upper()])
+    except (ValueError, KeyError):
+        return None
+
+
+async def _extract_engagement(article) -> dict:
+    """
+    Best-effort engagement counts from the article's role="group" aria-label,
+    e.g. '12 replies, 34 reposts, 567 likes, 8901 views'. All guarded — any
+    DOM drift just yields None rather than raising.
+    """
+    out = {"replies": None, "reposts": None, "likes": None, "views": None}
+    try:
+        group = await article.query_selector('[role="group"][aria-label]')
+        if not group:
+            return out
+        label = (await group.get_attribute("aria-label") or "").lower()
+        for part in label.split(","):
+            part = part.strip()
+            for key, kw in (("replies", "repl"), ("reposts", "repost"),
+                            ("likes", "like"), ("views", "view")):
+                if kw in part:
+                    out[key] = _to_int(part)
+    except Exception:
+        pass
+    return out
+
+
+async def _extract_permalink(article, username: str) -> Optional[str]:
+    """Status URL from the timestamp link (a[href*='/status/'])."""
+    try:
+        a = await article.query_selector('a[href*="/status/"]')
+        if a:
+            href = await a.get_attribute("href")
+            if href:
+                return href if href.startswith("http") else f"https://x.com{href}"
+    except Exception:
+        pass
+    return None
+
+
+async def _fetch_follower_count(page) -> Optional[int]:
+    """Best-effort follower count from the profile header."""
+    try:
+        a = await page.query_selector('a[href$="/verified_followers"], a[href$="/followers"]')
+        if a:
+            txt = (await a.inner_text()).strip()
+            return _to_int(txt.split()[0]) if txt else None
+    except Exception:
+        pass
+    return None
+
+
 async def _fetch_posts(
     page,
     username: str,
@@ -167,6 +232,8 @@ async def _fetch_posts(
         if "protected" in body.lower():
             raise ValueError(f"Account @{username} has protected tweets")
         raise ValueError(f"Could not load timeline for @{username}")
+
+    follower_count = await _fetch_follower_count(page)
 
     posts = []
     seen: set = set()
@@ -198,9 +265,15 @@ async def _fetch_posts(
             # *original* post's datetime — filtering on that would stop the scrape
             # before collecting genuinely recent content.
             skip_date_cutoff = False
+            is_repost = False
             social_ctx = await article.query_selector('[data-testid="socialContext"]')
             if social_ctx:
                 skip_date_cutoff = True
+                try:
+                    ctx_txt = (await social_ctx.inner_text()).lower()
+                    is_repost = "repost" in ctx_txt or "retweet" in ctx_txt
+                except Exception:
+                    is_repost = False
 
             time_el = await article.query_selector('time')
             posted_at = None
@@ -225,7 +298,15 @@ async def _fetch_posts(
 
             consecutive_old = 0  # reset whenever we accept a post
             seen.add(text)
-            posts.append({"text": text, "posted_at": posted_at})
+            engagement = await _extract_engagement(article)
+            url = await _extract_permalink(article, username)
+            posts.append({
+                "text": text,
+                "posted_at": posted_at,
+                "url": url,
+                "is_repost": is_repost,
+                **engagement,
+            })
 
             if len(posts) >= count:
                 stopped_by = "count"
@@ -243,7 +324,8 @@ async def _fetch_posts(
     # and algorithmic mixing can interleave old and new content).
     posts.sort(key=lambda p: p.get("posted_at") or "", reverse=True)
 
-    return {"posts": posts, "stopped_by": stopped_by, "last_post_date": last_old_date}
+    return {"posts": posts, "stopped_by": stopped_by,
+            "last_post_date": last_old_date, "follower_count": follower_count}
 
 
 async def scrape_accounts(
@@ -331,6 +413,7 @@ async def scrape_accounts(
                     "posts": result["posts"],
                     "stopped_by": reason,
                     "last_post_date": result.get("last_post_date"),
+                    "follower_count": result.get("follower_count"),
                     "error": None,
                 }
             except (ValueError, InteractiveLoginRequired) as exc:
