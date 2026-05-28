@@ -107,10 +107,16 @@
       <!-- Meta + download -->
       <div class="flex items-center justify-between">
         <div id="metaBar" class="text-gray-400 text-xs"></div>
-        <button onclick="downloadJSON()"
-          class="text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors">
-          Download JSON
-        </button>
+        <div class="flex items-center gap-2">
+          <button onclick="downloadCSV()"
+            class="text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors">
+            Download CSV
+          </button>
+          <button onclick="downloadJSON()"
+            class="text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors">
+            Download JSON
+          </button>
+        </div>
       </div>
 
       <!-- Combined section with tabs -->
@@ -166,7 +172,7 @@
       <p class="text-gray-600 text-xs uppercase tracking-wider mb-3">Recent Runs</p>
       <div class="space-y-1">
         {% for run in recent_runs %}
-        <a href="/results/{{ run.filename }}" target="_blank"
+        <a href="#" onclick="loadResult('{{ run.filename }}'); return false;"
           class="flex items-center justify-between text-xs text-gray-500 hover:text-gray-200 py-1.5 border-b border-gray-900 transition-colors group">
           <span class="group-hover:text-gray-200">{{ run.filename }}</span>
           <span class="text-gray-700">{{ run.date }}</span>
@@ -603,6 +609,48 @@
       URL.revokeObjectURL(url);
     }
 
+    function downloadCSV() {
+      if (!currentResult) return;
+      const combined = currentResult.result.combined_tickers || [];
+      const rows = [
+        ['Rank', 'Ticker', 'Company', 'Sector', 'Industry', 'Price (USD)', 'Change %', 'Change Abs', 'Total Mentions', 'Accounts'],
+        ...combined.map((t, i) => [
+          i + 1,
+          t.ticker,
+          t.company || '',
+          t.sector || '',
+          t.industry || '',
+          t.price ?? '',
+          t.change_pct ?? '',
+          t.change_abs ?? '',
+          t.total_mentions,
+          Object.keys(t.sources || {}).join('; '),
+        ])
+      ];
+      const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (currentResult.saved_as || 'x-tickers').replace('.json', '.csv');
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function loadResult(filename) {
+      try {
+        document.getElementById('errorBox').classList.add('hidden');
+        const resp = await fetch('/results/' + encodeURIComponent(filename));
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const result = await resp.json();
+        currentResult = { result, saved_as: filename };
+        renderResults(result);
+        document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+      } catch (e) {
+        showError('Could not load result: ' + e.message);
+      }
+    }
+
     function escHtml(str) {
       return String(str || '')
         .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -617,6 +665,9 @@
 
     // ── Init ──────────────────────────────────────────────────────────────────
     loadWatchlists();
+    {% if recent_runs %}
+    loadResult('{{ recent_runs[0].filename }}');
+    {% endif %}
   </script>
 </body>
 </html>

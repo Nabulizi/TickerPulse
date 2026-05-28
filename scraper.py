@@ -47,34 +47,18 @@ def validate_username(username: str) -> str:
 
 async def _login(page, username: str, password: str) -> None:
     print("[→] Logging in to X...")
-    await page.goto("https://x.com/login", wait_until="networkidle")
+    await page.goto("https://x.com/login", wait_until="domcontentloaded")
+    await asyncio.sleep(3)  # wait for React to mount the login form
 
-    await page.wait_for_selector('input[autocomplete="username"]', timeout=15000)
-    await page.fill('input[autocomplete="username"]', username)
-    await asyncio.sleep(0.7)
-    await page.keyboard.press("Enter")
-    await asyncio.sleep(1.5)
-
-    # Unusual-activity check — X asks for email/phone before password.
-    # We cannot prompt interactively from an HTTP request handler, so we raise
-    # a structured error.  The user must complete login once from a terminal.
-    try:
-        await page.wait_for_selector(
-            'input[data-testid="ocfEnterTextTextInput"]', timeout=4000
-        )
-        raise InteractiveLoginRequired(
-            "X is asking for an unusual-activity verification (email/phone). "
-            "Run `python3 -c \"import asyncio; from scraper import _manual_login; asyncio.run(_manual_login())\"` "
-            "from your terminal to complete login, then retry."
-        )
-    except PWTimeout:
-        pass  # no unusual-activity prompt — continue
-
-    await page.wait_for_selector('input[name="password"]', timeout=10000)
+    # X's login form now shows username and password on the same page.
+    await page.wait_for_selector('input[name="username_or_email"]', state="attached", timeout=45000)
+    await page.fill('input[name="username_or_email"]', username)
+    await asyncio.sleep(0.5)
+    await page.wait_for_selector('input[name="password"]', state="attached", timeout=10000)
     await page.fill('input[name="password"]', password)
-    await asyncio.sleep(0.7)
+    await asyncio.sleep(0.5)
     await page.keyboard.press("Enter")
-    await asyncio.sleep(2.5)
+    await asyncio.sleep(3)
 
     # 2FA — same problem: cannot block on input() in an HTTP handler.
     try:
@@ -109,15 +93,20 @@ async def _manual_login() -> None:
         browser = await pw.chromium.launch(headless=False, slow_mo=80)
         context = await browser.new_context(viewport={"width": 1280, "height": 900})
         page = await context.new_page()
-        await page.goto("https://x.com/login", wait_until="networkidle")
+        await page.goto("https://x.com/login", wait_until="domcontentloaded")
+        await asyncio.sleep(3)  # wait for React to mount the login form
 
-        await page.wait_for_selector('input[autocomplete="username"]', timeout=15000)
-        await page.fill('input[autocomplete="username"]', x_user)
-        await asyncio.sleep(0.7)
+        # X's login form now shows username and password on the same page.
+        await page.wait_for_selector('input[name="username_or_email"]', state="attached", timeout=45000)
+        await page.fill('input[name="username_or_email"]', x_user)
+        await asyncio.sleep(0.5)
+        await page.wait_for_selector('input[name="password"]', state="attached", timeout=10000)
+        await page.fill('input[name="password"]', x_pass)
+        await asyncio.sleep(0.5)
         await page.keyboard.press("Enter")
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(3)
 
-        # Unusual-activity prompt — fill interactively
+        # Unusual-activity prompt — may appear after submit on some accounts
         try:
             unusual = await page.wait_for_selector(
                 'input[data-testid="ocfEnterTextTextInput"]', timeout=4000
@@ -128,12 +117,6 @@ async def _manual_login() -> None:
             await asyncio.sleep(1.5)
         except PWTimeout:
             pass
-
-        await page.wait_for_selector('input[name="password"]', timeout=10000)
-        await page.fill('input[name="password"]', x_pass)
-        await asyncio.sleep(0.7)
-        await page.keyboard.press("Enter")
-        await asyncio.sleep(2.5)
 
         # 2FA prompt — fill interactively
         try:
@@ -307,7 +290,12 @@ async def scrape_accounts(
         await page.goto("https://x.com/home", wait_until="domcontentloaded")
         await asyncio.sleep(2)
 
-        if "login" in page.url or "/i/flow/" in page.url:
+        # Detect login state by presence of the account-switcher button — more
+        # reliable than checking the URL because X redirects unauthenticated
+        # requests to https://x.com/ (not /login), which would bypass a URL check.
+        logged_in = await page.query_selector('[data-testid="SideNav_AccountSwitcher_Button"]')
+
+        if not logged_in:
             if SESSION_FILE.exists():
                 SESSION_FILE.unlink()
                 await browser.close()

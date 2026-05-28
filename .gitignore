@@ -1,6 +1,7 @@
 # credentials — never commit
 .env
 session.json
+cookies.json
 
 # virtual environment
 venv/
