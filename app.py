@@ -18,6 +18,11 @@ from sector_lookup import lookup_sectors
 from ticker_extractor import extract_tickers
 from tickers_db import load_tickers
 
+try:
+    import store  # optional SQLite persistence (time series + scorecard)
+except Exception:  # pragma: no cover
+    store = None
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -169,6 +174,7 @@ def scrape():
                 "posts_analyzed": len(data["posts"]),
                 "stopped_by": data.get("stopped_by"),
                 "last_post_date": data.get("last_post_date"),
+                "follower_count": data.get("follower_count"),
                 "posts": data["posts"],
                 "tickers": tickers,
                 "error": None,
@@ -177,9 +183,14 @@ def scrape():
             for t in tickers:
                 entry = combined.setdefault(
                     t["ticker"],
-                    {"ticker": t["ticker"], "total_mentions": 0, "sources": {}},
+                    {"ticker": t["ticker"], "total_mentions": 0,
+                     "cashtag_mentions": 0, "signal_score": 0.0,
+                     "net_sentiment": 0.0, "sources": {}},
                 )
                 entry["total_mentions"] += t["mentions"]
+                entry["cashtag_mentions"] += t.get("cashtag_mentions", 0)
+                entry["signal_score"] += t.get("signal_score", 0.0)
+                entry["net_sentiment"] += t.get("net_sentiment", 0.0)
                 entry["sources"][username] = t["occurrences"]
 
         all_ticker_symbols = list(combined.keys())
@@ -207,13 +218,35 @@ def scrape():
             t["change_abs"]   = p.get("change_abs")
             t["currency"]     = p.get("currency",     "USD")
             t["market_state"] = p.get("market_state", "UNKNOWN")
+            t["price_suspicious"] = p.get("suspicious", False)
 
         for data in run["results"].values():
             if not data["error"]:
                 for t in data["tickers"]:
                     _enrich(t)
 
-        combined_list = sorted(combined.values(), key=lambda x: -x["total_mentions"])
+        # Finalize derived signal fields and rank by CONVICTION, not raw counts:
+        # distinct accounts first (kills single-account cashtag spam like $TSLA),
+        # then aggregate signal_score, then total mentions as a tiebreaker.
+        for entry in combined.values():
+            entry["accounts"] = len(entry["sources"])
+            entry["signal_score"] = round(entry["signal_score"], 3)
+            entry["net_sentiment"] = round(entry["net_sentiment"], 2)
+            entry["sentiment_label"] = (
+                "bullish" if entry["net_sentiment"] > 0.15
+                else "bearish" if entry["net_sentiment"] < -0.15
+                else "mixed/neutral"
+            )
+            # Low-confidence: one account, no cashtag, weak signal — surface but de-rank.
+            entry["low_confidence"] = (
+                entry["accounts"] == 1
+                and entry["cashtag_mentions"] == 0
+            )
+
+        combined_list = sorted(
+            combined.values(),
+            key=lambda x: (-x["accounts"], -x["signal_score"], -x["total_mentions"]),
+        )
         for entry in combined_list:
             _enrich(entry)
 
@@ -232,6 +265,12 @@ def scrape():
                 "market_state":   entry.get("market_state"),
             })
         run["by_sector"] = dict(sorted(by_sector.items()))
+
+        if store is not None:
+            try:
+                store.record_run(run)
+            except Exception as exc:  # persistence must never break a scan
+                print(f"[!] store.record_run failed (non-fatal): {exc}")
 
         slug = "_".join(valid_usernames[:3])
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -334,6 +373,32 @@ def delete_watchlist(name):
     del wl[name]
     _save_watchlists(wl)
     return jsonify({"ok": True})
+
+
+@app.route("/velocity/<ticker>")
+def velocity(ticker):
+    if store is None:
+        return jsonify({"error": "persistence not available"}), 503
+    try:
+        days = max(1, min(int(request.args.get("days", 7)), 90))
+    except (TypeError, ValueError):
+        days = 7
+    return jsonify({
+        "ticker": ticker.upper(),
+        "velocity": store.mention_velocity(ticker, days),
+        "first_mentions": store.first_mentions(ticker),
+    })
+
+
+@app.route("/scorecard")
+def scorecard():
+    if store is None:
+        return jsonify({"error": "persistence not available"}), 503
+    try:
+        min_calls = max(1, min(int(request.args.get("min_calls", 3)), 100))
+    except (TypeError, ValueError):
+        min_calls = 3
+    return jsonify(store.account_scorecard(min_calls))
 
 
 def _write_json_atomic(path: Path, data) -> None:
