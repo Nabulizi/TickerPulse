@@ -79,11 +79,11 @@ def _with_retry(fn, ticker):
 
 
 def _yf_session():
-    """Return a curl_cffi (or requests) session with SSL verification disabled.
-    Needed when the local network uses a self-signed certificate proxy."""
+    """Return a curl_cffi session impersonating Chrome — bypasses Yahoo Finance
+    rate limiting and self-signed certificate proxies."""
     try:
-        from curl_cffi import requests as cffi_requests  # yfinance's preferred backend
-        return cffi_requests.Session(verify=False)
+        from curl_cffi import requests as cffi_requests
+        return cffi_requests.Session(impersonate="chrome110", verify=False)
     except ImportError:
         import requests as _req
         s = _req.Session()
@@ -91,45 +91,60 @@ def _yf_session():
         return s
 
 
-def _fetch_price(ticker: str) -> dict:
+def _fetch_prices_batch(tickers: list) -> dict:
+    """
+    Fetch prices for all tickers in a single yf.download() call.
+    One HTTP request avoids per-ticker rate limiting from fast_info.
+    Returns {ticker: price_dict} — None for any ticker that failed.
+    """
     import yfinance as yf
+    now = time.time()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        fi = yf.Ticker(ticker, session=_yf_session()).fast_info
+        raw = yf.download(
+            tickers,
+            period="5d",
+            interval="1d",
+            progress=False,
+            auto_adjust=True,
+            session=_yf_session(),
+        )
 
-    def g(*names):
-        for nm in names:
-            try:
-                v = fi[nm]
-            except Exception:
-                v = getattr(fi, nm, None)
-            if v is not None:
-                return v
-        return None
+    results = {}
+    if raw.empty:
+        return {t: None for t in tickers}
 
-    price = g("last_price", "lastPrice")
-    prev = g("previous_close", "previousClose")
-    currency = g("currency") or "USD"
+    # yf.download always returns a MultiIndex-columned DataFrame with Ticker level
+    close_df = raw["Close"]  # DataFrame: rows=dates, cols=tickers
 
-    change_pct = change_abs = None
-    if price is not None and prev not in (None, 0):
-        change_abs = price - prev
-        change_pct = (change_abs / prev) * 100
-
-    ok = price is not None and price > 0
-    suspicious = bool(change_pct is not None and abs(change_pct) > SANITY_PCT)
-
-    return {
-        "price": round(price, 2) if price is not None else None,
-        "prev_close": round(prev, 2) if prev is not None else None,
-        "change_abs": round(change_abs, 2) if change_abs is not None else None,
-        "change_pct": round(change_pct, 2) if change_pct is not None else None,
-        "currency": currency,
-        "market_state": g("market_state", "marketState") or "UNKNOWN",
-        "ok": ok,
-        "suspicious": suspicious,
-        "_ts": time.time(),
-    }
+    for t in tickers:
+        try:
+            if t not in close_df.columns:
+                results[t] = None
+                continue
+            series = close_df[t].dropna()
+            if len(series) < 2:
+                results[t] = None
+                continue
+            price = float(series.iloc[-1])
+            prev  = float(series.iloc[-2])
+            change_abs = price - prev
+            change_pct = (change_abs / prev) * 100
+            ok = price > 0
+            results[t] = {
+                "price":       round(price, 2),
+                "prev_close":  round(prev, 2),
+                "change_abs":  round(change_abs, 2),
+                "change_pct":  round(change_pct, 2),
+                "currency":    "USD",
+                "market_state": "REGULAR",
+                "ok":          ok,
+                "suspicious":  bool(ok and abs(change_pct) > SANITY_PCT),
+                "_ts":         now,
+            }
+        except Exception:
+            results[t] = None
+    return results
 
 
 def _fetch_profile(ticker: str) -> dict:
@@ -176,25 +191,31 @@ def get_market_data(tickers: list) -> dict:
 
     new_price, new_profile = {}, {}
 
-    def _run(fetch, items, sink):
+    # Prices: single batch download (avoids per-ticker rate limiting)
+    if need_price:
+        print(f"[\u2192] Prices: batch-fetching {len(need_price)} tickers via yf.download...")
+        try:
+            batch = _fetch_prices_batch(need_price)
+            new_price.update(batch)
+        except Exception as exc:
+            print(f"[!] Price batch fetch failed: {exc}")
+            new_price.update({t: None for t in need_price})
+
+    def _run_profiles(items, sink):
         if not items:
             return
+        print(f"[\u2192] Profiles: fetching {len(items)} via .info...")
         workers = min(len(items), MAX_WORKERS)
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futs = {pool.submit(_with_retry, fetch, t): t for t in items}
+            futs = {pool.submit(_with_retry, _fetch_profile, t): t for t in items}
             for fut in as_completed(futs):
                 t = futs[fut]
                 try:
                     sink[t] = fut.result()
                 except Exception:
-                    sink[t] = None  # leave prior good value in place
+                    sink[t] = None
 
-    if need_price:
-        print(f"[\u2192] Prices: fetching {len(need_price)} via fast_info...")
-    _run(_fetch_price, need_price, new_price)
-    if need_profile:
-        print(f"[\u2192] Profiles: fetching {len(need_profile)} via .info...")
-    _run(_fetch_profile, need_profile, new_profile)
+    _run_profiles(need_profile, new_profile)
 
     with _lock:
         price_cache = _load(PRICE_CACHE)
