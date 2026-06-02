@@ -95,6 +95,7 @@ def build_digest(run: dict) -> dict:
             "total_mentions": t.get("total_mentions"),
             "accounts": t.get("accounts"),
             "signal_score": t.get("signal_score"),
+            "conviction_score": t.get("conviction_score"),
             "net_sentiment": t.get("net_sentiment"),
             "sentiment_label": t.get("sentiment_label"),
             "sources": list((t.get("sources") or {}).keys()),
@@ -104,7 +105,10 @@ def build_digest(run: dict) -> dict:
         "date": today,
         "accounts": run.get("accounts_analyzed", []),
         "total_tickers": len(combined),
-        "top_conviction": [slim(t) for t in combined if not t.get("low_confidence")][:8],
+        "top_conviction": sorted(
+            [slim(t) for t in combined if not t.get("low_confidence")],
+            key=lambda x: (-(x.get("conviction_score") or 0), -(x.get("signal_score") or 0))
+        )[:8],
         "bullish": [slim(t) for t in combined if t.get("sentiment_label") == "bullish"][:8],
         "bearish": [slim(t) for t in combined if t.get("sentiment_label") == "bearish"][:8],
         "new_today": [],
@@ -119,23 +123,31 @@ def build_digest(run: dict) -> dict:
         except Exception:
             first_seen, daily = {}, {}
 
+        seen_new: set = set()
         for t in combined:
             sym = t["ticker"]
             # Stamp the full entry so the ranked table can badge first-ever mentions.
             t["is_new_today"] = first_seen.get(sym) == today
-            if t["is_new_today"]:
+            if t["is_new_today"] and sym not in seen_new:
+                seen_new.add(sym)
                 digest["new_today"].append(slim(t))
 
             counts = daily.get(sym, {})
             today_n = counts.get(today, 0)
             prior = [v for d, v in counts.items() if d != today]
-            prior_avg = sum(prior) / len(prior) if prior else 0.0
-            # Accelerating: at least 2 mentions today AND clearly above the
-            # prior-day baseline (or no prior mentions at all = brand-new spike).
-            if today_n >= 2 and today_n > max(1.0, prior_avg * 1.5):
+            # Skip acceleration for brand-new tickers (no prior history).
+            # They are already captured in new_today; flagging them as
+            # "accelerating" with no baseline is semantically wrong.
+            if not prior:
+                continue
+            prior_avg = sum(prior) / len(prior)
+            # Accelerating: at least 3 mentions today, 2× prior average, AND
+            # at least +2 above baseline to filter low-volume noise (1→2 jumps).
+            if today_n >= 3 and today_n > prior_avg * 2.0 and (today_n - prior_avg) >= 2:
                 item = slim(t)
                 item["today_mentions"] = today_n
                 item["prior_avg"] = round(prior_avg, 1)
+                item["accel_factor"] = round(today_n / max(prior_avg, 0.1), 1)
                 digest["accelerating"].append(item)
 
         digest["accelerating"].sort(key=lambda x: -x["today_mentions"])
@@ -288,6 +300,7 @@ def scrape():
             emit({"type": "progress",
                   "message": f"Fetching prices for {len(all_ticker_symbols)} ticker(s)..."})
             price_map = lookup_prices(all_ticker_symbols)
+            run["price_fetch_time"] = datetime.now(timezone.utc).isoformat()
         else:
             price_map = {}
 
@@ -317,7 +330,13 @@ def scrape():
         # then aggregate signal_score, then total mentions as a tiebreaker.
         for entry in combined.values():
             entry["accounts"] = len(entry["sources"])
-            entry["signal_score"] = round(entry["signal_score"], 3)
+            # Normalize signal_score to avg-per-mention so it's comparable across
+            # tickers with different mention counts and numbers of accounts.
+            # Without this, summing per-account signal scores creates an arbitrary
+            # number that grows with mention volume, not signal quality.
+            entry["signal_score"] = round(
+                entry["signal_score"] / max(entry["total_mentions"], 1), 3
+            )
             entry["net_sentiment"] = round(entry["net_sentiment"], 2)
             entry["sentiment_label"] = (
                 "bullish" if entry["net_sentiment"] > 0.15
@@ -329,6 +348,15 @@ def scrape():
                 entry["accounts"] == 1
                 and entry["cashtag_mentions"] == 0
             )
+            # Conviction score: fraction of occurrences that are high-quality signals
+            # (cashtag confidence + not a trailing tag). Used to rank TOP CONVICTION.
+            total_occ = sum(len(occs) for occs in entry["sources"].values())
+            high_conv = sum(
+                1 for occs in entry["sources"].values()
+                for occ in occs
+                if occ.get("confidence") == "cashtag" and not occ.get("is_trailing_tag")
+            )
+            entry["conviction_score"] = round(high_conv / max(total_occ, 1), 3)
 
         combined_list = sorted(
             combined.values(),
@@ -345,6 +373,7 @@ def scrape():
                 store.record_run(run)
             except Exception as exc:  # persistence must never break a scan
                 print(f"[!] store.record_run failed (non-fatal): {exc}")
+                run["digest_warning"] = "Database persistence failed; digest signals may be incomplete."
 
         # Digest runs AFTER record_run so today's mentions are already in the DB.
         try:
@@ -352,6 +381,7 @@ def scrape():
         except Exception as exc:  # digest must never break a scan
             print(f"[!] build_digest failed (non-fatal): {exc}")
             run["digest"] = None
+            run["digest_error"] = str(exc)
 
         slug = "_".join(valid_usernames[:3])
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -362,7 +392,12 @@ def scrape():
         with _scans_lock:
             if scan_id in _scans:
                 _scans[scan_id]["final"] = done_msg
-        q.put(done_msg)
+                # Put inside lock so final state and queue message are set atomically.
+                # A reconnecting SSE client reading scan["final"] will never race
+                # with the queue put and spin-wait 30s unnecessarily.
+                _scans[scan_id]["queue"].put(done_msg)
+            else:
+                q.put(done_msg)
 
     threading.Thread(target=run_scan, daemon=True).start()
     return jsonify({"scan_id": scan_id})

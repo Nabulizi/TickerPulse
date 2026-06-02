@@ -423,20 +423,22 @@
           addLog('✗ ' + msg.message, 'red');
           break;
 
-        case 'done':
+        case 'done': {
           if (currentES) { currentES.close(); currentES = null; }
           document.getElementById('progressArea').classList.add('hidden');
           currentResult = msg;
-          renderResults(msg.result);
+          const isDigest = _digestMode;
+          _digestMode = false;
+          renderResults(msg.result, isDigest);
           resetScanBtn();
-          if (_digestMode) {
-            _digestMode = false;
+          if (isDigest) {
             const dp = document.getElementById('digestPanel');
             if (dp && !dp.classList.contains('hidden')) {
               dp.scrollIntoView({ behavior: 'smooth' });
             }
           }
           break;
+        }
 
         case 'session_expired':
           if (currentES) { currentES.close(); currentES = null; }
@@ -718,9 +720,31 @@
       </div>`;
     }
 
-    function renderDigest(digest) {
+    function renderDigest(result, showDigest) {
       const panel = document.getElementById('digestPanel');
-      if (!digest) { panel.classList.add('hidden'); panel.innerHTML = ''; return; }
+      if (!showDigest) {
+        panel.classList.add('hidden');
+        panel.innerHTML = '';
+        return;
+      }
+      const digest = result.digest;
+      const digestError = result.digest_error;
+      const digestWarning = result.digest_warning;
+      const priceFetchTime = result.price_fetch_time;
+
+      if (!digest) {
+        if (digestError) {
+          panel.innerHTML = `<div class="bg-red-900/20 border border-red-800 rounded-xl p-4 mb-4">
+            <div class="text-red-400 font-semibold mb-1">⚠ Digest generation failed</div>
+            <div class="text-xs text-gray-400">${escHtml(digestError)}</div>
+          </div>`;
+          panel.classList.remove('hidden');
+        } else {
+          panel.classList.add('hidden');
+          panel.innerHTML = '';
+        }
+        return;
+      }
 
       const section = (title, items, color, renderItem) => {
         if (!items || !items.length) return '';
@@ -730,18 +754,27 @@
         </div>`;
       };
 
+      const convPct = t => t.conviction_score != null
+        ? `<span class="text-blue-300/70 text-xs">${Math.round(t.conviction_score * 100)}% conv</span>` : '';
+
       const body = [
         section('🆕 New today', digest.new_today, 'text-emerald-400', t => digestChip(t)),
         section('🚀 Accelerating', digest.accelerating, 'text-orange-400',
-          t => digestChip(t, `<span class="text-orange-300 text-xs">${t.today_mentions}↑ vs ${t.prior_avg}/d</span>`)),
+          t => digestChip(t, `<span class="text-orange-300 text-xs">${t.today_mentions}↑ vs ${t.prior_avg}/d (${t.accel_factor || ''}×)</span>`)),
         section('🎯 Top conviction', digest.top_conviction, 'text-blue-400',
-          t => digestChip(t, `<span class="text-gray-500 text-xs">${t.accounts} acct${t.accounts === 1 ? '' : 's'}</span>`)),
+          t => digestChip(t, `${convPct(t)}<span class="text-gray-500 text-xs">${t.accounts} acct${t.accounts === 1 ? '' : 's'}</span>`)),
         section('▲ Bullish', digest.bullish, 'text-green-400', t => digestChip(t)),
         section('▼ Bearish', digest.bearish, 'text-red-400', t => digestChip(t)),
       ].join('');
 
       const empty = body ? '' :
         '<div class="text-gray-600 text-xs">No notable signals in this window — try a wider scan window or more accounts.</div>';
+
+      const warning = digestWarning
+        ? `<div class="text-yellow-500/70 text-xs mb-2">⚠ ${escHtml(digestWarning)}</div>` : '';
+
+      const priceTs = priceFetchTime
+        ? `<div class="text-xs text-gray-600 mt-2 pt-2 border-t border-gray-800">Prices as of ${new Date(priceFetchTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>` : '';
 
       panel.innerHTML = `<div class="bg-gray-900 border border-emerald-900/50 rounded-xl p-5">
         <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-800">
@@ -751,13 +784,13 @@
           </div>
           <span class="text-xs text-gray-500">${(digest.accounts || []).length} account(s) · ${digest.total_tickers || 0} tickers</span>
         </div>
-        ${body}${empty}
+        ${warning}${body}${empty}${priceTs}
       </div>`;
       panel.classList.remove('hidden');
     }
 
-    function renderResults(result) {
-      renderDigest(result.digest);
+    function renderResults(result, showDigest = false) {
+      renderDigest(result, showDigest);
       const combined = result.combined_tickers || [];
       const accounts = result.accounts_analyzed || [];
 
