@@ -821,8 +821,6 @@
           const dim = t.low_confidence ? 'opacity-50' : '';
           const susp = t.price_suspicious
             ? '<span title="Suspicious price move — verify before trusting" class="text-yellow-500 ml-1">⚠</span>' : '';
-          const cash = t.cashtag_mentions
-            ? `<span class="text-gray-600 text-xs ml-1" title="${t.cashtag_mentions} as $cashtag">${t.cashtag_mentions}$</span>` : '';
           return `<tr class="border-b border-gray-800 hover:bg-gray-800/40 transition-colors ${dim}">
             <td class="px-4 py-3 text-gray-600">${i + 1}</td>
             <td class="px-4 py-3 font-bold text-green-400 text-base" title="${escAttr(t.company || '')}">
@@ -830,7 +828,7 @@
             </td>
             <td class="px-4 py-3 text-sm">${fmtPrice(t.price, t.currency)}${susp}</td>
             <td class="px-4 py-3 text-sm">${fmtChange(t.change_pct, t.change_abs)}</td>
-            <td class="px-4 py-3 text-white font-semibold">${t.total_mentions}${cash}</td>
+            <td class="px-4 py-3 text-white font-semibold">${t.total_mentions}</td>
             <td class="px-4 py-3 text-gray-500 text-xs">${escHtml(accs)}</td>
           </tr>`;
         }).join('');
