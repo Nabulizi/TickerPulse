@@ -246,3 +246,57 @@ and profile cache write are all skipped unless the flag is set.
 Updated the one call site that genuinely needs full profiles (the dedicated
 `lookup_sectors()` function) to pass `include_profiles=True`, preserving
 existing behaviour for any caller that uses sector data explicitly.
+
+---
+
+# Auto-scan scheduler with macOS notifications (2026-06-07)
+
+## 19. `scheduler.py` (new) — background auto-scan daemon
+
+Eliminates the need to manually trigger hourly scans. A background daemon
+thread runs a full watchlist scan automatically and sends a native macOS
+notification when anything worth seeing surfaces.
+
+**Schedule:**
+- Every **60 minutes** during NYSE market hours (Mon–Fri 09:30–16:00 ET)
+- Every **6 hours** outside market hours and on weekends
+
+**Notification threshold:** only fires when a ticker is mentioned by **2 or
+more distinct accounts** in the same scan window — single-account noise is
+silently ignored.
+
+**Notification format (macOS):**
+```
+X Monitor · 3 signals
+$NVDA (4 accts), $AAPL (2 accts), $AMD (2 accts)
+```
+
+**Design notes:**
+- Uses `osascript` for native macOS notifications — zero new dependencies
+- Reads all saved watchlists at scan time (picks up any accounts you've added
+  since startup without requiring a restart)
+- Import-safe: `app.py` wraps the import in `try/except` so a failure here
+  never prevents the Flask server from starting
+- `get_status()` / `set_enabled()` for runtime control via the API
+
+## 20. `app.py` — scheduler wiring + control endpoints
+
+- Imports `scheduler` (guarded, optional)
+- `scheduler.start()` called at app launch alongside the ticker DB preload
+- `GET /auto-scan/status` — returns `enabled`, `seconds_until_next`,
+  `last_tickers`, `last_error`, `market_hours` flag
+- `POST /auto-scan/toggle` — enable or disable without restarting the app
+
+## 21. `templates/index.html` — auto-scan status badge
+
+A live countdown badge in the header shows the state of the scheduler at a
+glance and lets you toggle it without opening any settings panel:
+
+| State | Badge |
+|---|---|
+| Enabled, market hours | `● Auto · 47m` (green) |
+| Enabled, off-hours | `● Auto · 3h 12m` (gray) |
+| Disabled | `○ Auto · off` (dim) |
+
+The badge polls `/auto-scan/status` every 30 seconds so the countdown stays
+accurate. Clicking it toggles the scheduler on or off immediately.
