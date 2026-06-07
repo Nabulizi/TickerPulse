@@ -6,8 +6,8 @@ A web app that scrapes posts from X (Twitter) accounts, extracts US stock ticker
 
 - Scrapes posts from one or more X accounts using Playwright (headless browser)
 - Extracts US stock tickers using both `$CASHTAG` patterns and plain uppercase symbols, validated against the SEC's official ticker list
-- Enriches results with live price data (via yfinance) and sector/industry info
-- Groups tickers by sector and tracks which accounts mentioned each one
+- Enriches results with live price data (via yfinance)
+- Tracks which accounts mentioned each ticker
 - Streams progress to the browser via Server-Sent Events (SSE)
 - Saves every scan as a JSON file in `output/` and shows the 10 most recent runs on the dashboard
 - Supports per-user watchlists
@@ -95,7 +95,7 @@ Then open **http://localhost:5000** in your browser.
 2. Set the number of posts to fetch per account (default 10, max 200)
 3. Optionally set a `since_date` to only analyze posts after a given date
 4. Click **Scan** — progress streams in real time
-5. Results show tickers ranked by mention count, with price, % change, sector, and source posts
+5. Results show tickers ranked by mention count, with price, % change, and source posts
 
 ## Caching
 
@@ -103,8 +103,6 @@ Then open **http://localhost:5000** in your browser.
 |---|---|---|
 | US ticker list (SEC) | `data/us_tickers_cache.json` | 7 days |
 | Stock prices | `data/price_cache.json` | 5 minutes |
-| Sector / industry | `data/sector_cache.json` | 30 days |
-
 All cache writes are atomic (temp file + rename) to prevent corruption.
 
 ## Output Files
@@ -115,4 +113,4 @@ Each scan is saved to `output/` as a timestamped JSON file, e.g.:
 output/20260528_160933_Mr_Derivatives.json
 ```
 
-The file contains the full scan: accounts analyzed, settings, per-account posts and tickers, combined ticker counts, sector groupings, and price data.
+The file contains the full scan: accounts analyzed, settings, per-account posts and tickers, combined ticker counts, and price data.

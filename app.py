@@ -532,6 +532,8 @@ def delete_watchlist(name):
 def velocity(ticker):
     if store is None:
         return jsonify({"error": "persistence not available"}), 503
+    if not re.match(r'^[A-Z]{1,5}$', ticker.upper()):
+        return jsonify({"error": "Invalid ticker"}), 400
     try:
         days = max(1, min(int(request.args.get("days", 7)), 90))
     except (TypeError, ValueError):

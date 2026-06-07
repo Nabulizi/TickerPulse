@@ -16,6 +16,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -298,8 +299,6 @@ def update_forward_returns(progress=None) -> dict:
     so a manual trigger can tell "Yahoo throttled us, try later" apart from
     "no mentions are old enough yet".
     """
-    from datetime import timedelta
-
     import yfinance as yf  # local import keeps store.py usable without yfinance
     try:
         from market_data import _yf_session  # reuse SSL/proxy-tolerant session

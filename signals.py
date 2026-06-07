@@ -64,8 +64,9 @@ def sentiment(text: str) -> tuple[str, float]:
     for i, tok in enumerate(tokens):
         hit = 1 if tok in _BULL_WORDS else (-1 if tok in _BEAR_WORDS else 0)
         if hit:
-            prev = tokens[i - 1] if i else ""
-            if prev in _NEGATIONS:        # "not strong" -> flip
+            prev = tokens[i - 1] if i >= 1 else ""
+            prev2 = tokens[i - 2] if i >= 2 else ""
+            if prev in _NEGATIONS or prev2 in _NEGATIONS:  # "not going to rally" -> flip
                 hit = -hit
             score += hit
 
