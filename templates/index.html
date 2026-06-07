@@ -4,17 +4,25 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>X Stock Ticker Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fira+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
+    body { font-family: 'Fira Sans', ui-sans-serif, system-ui, sans-serif; }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #111; }
     ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
     .tab-active { border-color: #3b82f6; color: #fff; }
     .tab-inactive { border-color: transparent; color: #6b7280; }
-    .ticker-accent { color: #7dd3fc; }
+    .ticker-accent { color: #7dd3fc; font-family: 'Fira Code', ui-monospace, monospace; }
+    th[data-sort-col] { cursor: pointer; user-select: none; }
+    th[data-sort-col]:hover { color: #e2e8f0; }
+    @media (prefers-reduced-motion: reduce) {
+      .animate-spin { animation: none; }
+    }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen font-sans text-sm antialiased">
+<body class="bg-slate-950 text-slate-100 min-h-screen text-sm antialiased">
 
   <div class="max-w-7xl mx-auto px-6 py-8">
 
@@ -35,11 +43,11 @@
     </div>
 
     <!-- Input form -->
-    <div class="bg-slate-900/95 border border-slate-800 rounded-xl p-5 mb-6 shadow-[0_12px_40px_rgba(15,23,42,0.18)]">
-      <label class="block text-slate-200 font-semibold mb-2 text-xs uppercase tracking-[0.16em]">X Accounts to Monitor</label>
+    <form id="scanForm" onsubmit="runScrape(); return false;" class="bg-slate-900/95 border border-slate-800 rounded-xl p-5 mb-6 shadow-[0_12px_40px_rgba(15,23,42,0.18)]">
+      <label for="usernames" class="block text-slate-200 font-semibold mb-2 text-xs uppercase tracking-[0.16em]">X Accounts to Monitor</label>
       <textarea id="usernames" rows="4"
         placeholder="One username per line, or comma-separated:&#10;&#10;chamath&#10;unusual_whales, Mr_Derivatives"
-        class="w-full bg-slate-950/70 text-slate-100 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:border-sky-500 resize-none placeholder-slate-500 leading-relaxed"></textarea>
+        class="w-full bg-slate-950/70 text-slate-100 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 resize-none placeholder-slate-500 leading-relaxed"></textarea>
 
       <!-- Watchlists -->
       <div class="mt-3 pt-3 border-t border-gray-800">
@@ -54,8 +62,8 @@
           </button>
           <div id="saveWlInline" class="hidden flex items-center gap-2">
             <input id="watchlistNameInput" type="text" maxlength="50" placeholder="Name..."
-              onkeydown="if(event.key==='Enter')confirmSaveWatchlist();if(event.key==='Escape')hideSaveWatchlist();"
-              class="bg-slate-950/70 text-slate-100 border border-slate-700 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 w-40" />
+              onkeydown="if(event.key==='Enter'){event.preventDefault();confirmSaveWatchlist();}if(event.key==='Escape')hideSaveWatchlist();"
+              class="bg-slate-950/70 text-slate-100 border border-slate-700 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 w-40" />
             <button type="button" onclick="confirmSaveWatchlist()"
               class="text-xs text-sky-300 hover:text-sky-200 px-2 py-1 transition-colors">Save</button>
             <button type="button" onclick="hideSaveWatchlist()"
@@ -103,7 +111,7 @@
           <div class="flex items-center gap-2">
             <label class="text-slate-500 text-xs uppercase tracking-[0.16em] whitespace-nowrap">Max posts</label>
             <select id="postCount"
-              class="bg-slate-950/70 text-slate-100 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-sky-500">
+              class="bg-slate-950/70 text-slate-100 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500">
               <option value="10">10 posts</option>
               <option value="25">25 posts</option>
               <option value="50">50 posts</option>
@@ -114,7 +122,7 @@
           <div class="flex items-center gap-2">
             <label class="text-slate-500 text-xs uppercase tracking-[0.16em] whitespace-nowrap">Since date</label>
             <input type="date" id="sinceDate"
-              class="bg-slate-950/70 text-slate-100 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-sky-500"
+              class="bg-slate-950/70 text-slate-100 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500"
               title="Stop collecting posts older than this date" />
           </div>
         </div>
@@ -123,17 +131,18 @@
       </div>
 
       <div class="mt-4 flex items-center gap-2">
-        <button id="scrapeBtn" onclick="runScrape()"
+        <button id="scrapeBtn" type="submit"
           class="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
           Scan Accounts
         </button>
-        <button id="digestBtn" onclick="runDigest()"
+        <button id="digestBtn" type="button" onclick="runDigest()"
           title="Scan today's posts for your accounts (or all saved watchlists if empty) and build a one-glance signal summary"
-          class="bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white px-6 py-2 rounded-lg font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-          📋 Daily Digest
+          class="inline-flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white px-6 py-2 rounded-lg font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="12" y1="11" x2="16" y2="11"/><line x1="12" y1="16" x2="16" y2="16"/><line x1="8" y1="11" x2="8.01" y2="11"/><line x1="8" y1="16" x2="8.01" y2="16"/></svg>
+          Daily Digest
         </button>
       </div>
-    </div>
+    </form>
 
     <!-- Progress area -->
     <div id="progressArea" class="hidden bg-slate-900/95 border border-slate-800 rounded-xl p-4 mb-6">
@@ -144,17 +153,24 @@
         </svg>
         <span id="progressStatus" class="text-gray-200 text-sm font-semibold">Connecting...</span>
       </div>
-      <div id="progressLog" class="mt-1.5 space-y-0.5 text-xs max-h-40 overflow-y-auto"></div>
+      <div id="progressLog" aria-live="polite" aria-label="Scan progress" class="mt-1.5 space-y-0.5 text-xs max-h-40 overflow-y-auto"></div>
     </div>
 
     <!-- Session expired banner -->
-    <div id="sessionBanner" class="hidden bg-yellow-950 border border-yellow-700 rounded-xl p-4 mb-6 text-yellow-300 text-sm flex items-center justify-between gap-4">
+    <div id="sessionBanner" role="alert" class="hidden bg-yellow-950 border border-yellow-700 rounded-xl p-4 mb-6 text-yellow-300 text-sm flex items-center justify-between gap-4">
       <span id="sessionBannerMsg">X session expired. Please reconnect to continue scanning.</span>
       <button onclick="connectX()" class="shrink-0 bg-yellow-700 hover:bg-yellow-600 text-white text-xs font-semibold px-4 py-1.5 rounded transition-colors" id="sessionBannerBtn">Connect X Account</button>
     </div>
 
     <!-- Error -->
-    <div id="errorBox" class="hidden bg-red-950 border border-red-800 rounded-xl p-4 mb-6 text-red-300 text-xs leading-relaxed"></div>
+    <div id="errorBox" role="alert" aria-live="assertive" class="hidden bg-red-950 border border-red-800 rounded-xl p-4 mb-6">
+      <div class="flex items-start justify-between gap-3">
+        <span id="errorMsg" class="text-red-300 text-xs leading-relaxed"></span>
+        <button type="button" onclick="document.getElementById('errorBox').classList.add('hidden')" aria-label="Dismiss error" class="shrink-0 text-red-400 hover:text-red-200 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 rounded">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
 
     <!-- Results -->
     <div id="results" class="hidden space-y-6">
@@ -179,12 +195,12 @@
 
       <!-- Combined section with tabs -->
       <div>
-        <div class="flex items-center gap-4 mb-3 border-b border-gray-800 pb-0">
-          <button id="tab-posts" onclick="switchTab('posts')"
+        <div role="tablist" class="flex items-center gap-4 mb-3 border-b border-gray-800 pb-0">
+          <button id="tab-posts" role="tab" aria-selected="true" aria-controls="view-posts" onclick="switchTab('posts')"
             class="tab-active border-b-2 px-1 pb-2 text-sm font-semibold transition-colors">
             Posts <span id="postsCount" class="text-xs text-gray-500 font-normal"></span>
           </button>
-          <button id="tab-ranked" onclick="switchTab('ranked')"
+          <button id="tab-ranked" role="tab" aria-selected="false" aria-controls="view-ranked" onclick="switchTab('ranked')"
             class="tab-inactive border-b-2 px-1 pb-2 text-sm font-semibold transition-colors">
             Ranked Tickers
           </button>
@@ -199,14 +215,14 @@
             <table class="w-full">
               <thead>
                 <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-[0.16em]">
-                  <th class="text-left px-4 py-3 w-8">#</th>
-                  <th class="text-left px-4 py-3">Ticker</th>
-                  <th class="text-left px-4 py-3">Signal</th>
-                  <th class="text-left px-4 py-3">Mood</th>
-                  <th class="text-left px-4 py-3">Price</th>
-                  <th class="text-left px-4 py-3">Change</th>
-                  <th class="text-left px-4 py-3">Mentions</th>
-                  <th class="text-left px-4 py-3">Accounts</th>
+                  <th scope="col" class="text-left px-4 py-3 w-8">#</th>
+                  <th scope="col" data-sort-col="ticker" onclick="sortTable('ticker')" class="text-left px-4 py-3">Ticker<span class="sort-ind ml-1"></span></th>
+                  <th scope="col" data-sort-col="signal_score" onclick="sortTable('signal_score')" class="text-left px-4 py-3">Signal<span class="sort-ind ml-1"></span></th>
+                  <th scope="col" data-sort-col="net_sentiment" onclick="sortTable('net_sentiment')" class="text-left px-4 py-3">Mood<span class="sort-ind ml-1"></span></th>
+                  <th scope="col" data-sort-col="price" onclick="sortTable('price')" class="text-left px-4 py-3">Price<span class="sort-ind ml-1"></span></th>
+                  <th scope="col" data-sort-col="change_pct" onclick="sortTable('change_pct')" class="text-left px-4 py-3">Change<span class="sort-ind ml-1"></span></th>
+                  <th scope="col" data-sort-col="total_mentions" onclick="sortTable('total_mentions')" class="text-left px-4 py-3">Mentions<span class="sort-ind ml-1"></span></th>
+                  <th scope="col" data-sort-col="accounts" onclick="sortTable('accounts')" class="text-left px-4 py-3">Accounts<span class="sort-ind ml-1"></span></th>
                 </tr>
               </thead>
               <tbody id="combinedTable"></tbody>
@@ -230,11 +246,11 @@
       <p class="text-slate-500 text-xs uppercase tracking-[0.16em] mb-3">Recent Runs</p>
       <div class="space-y-1">
         {% for run in recent_runs %}
-        <a href="#" onclick="loadResult('{{ run.filename }}'); return false;"
-          class="flex items-center justify-between text-xs text-slate-400 hover:text-slate-100 py-1.5 border-b border-slate-900 transition-colors group">
+        <button type="button" onclick="loadResult('{{ run.filename }}')"
+          class="flex items-center justify-between w-full text-left text-xs text-slate-400 hover:text-slate-100 py-1.5 border-b border-slate-900 transition-colors group focus:outline-none focus:ring-2 focus:ring-sky-500/50 rounded">
           <span class="group-hover:text-slate-100">{{ run.filename }}</span>
           <span class="text-slate-600">{{ run.date }}</span>
-        </a>
+        </button>
         {% endfor %}
       </div>
     </div>
@@ -245,9 +261,27 @@
   <script>
     let currentResult = null;
     let currentES = null;
-    let _digestMode = false;   // when true, the next finished scan shows and scrolls to the digest
-    // Preset state: {count, since_date} resolved at scan time
+    let _digestMode = false;
     let _preset = { count: 10, since_date: '' };
+    let _sortState = { col: null, dir: 'desc' };
+
+    // ── SVG icon constants ────────────────────────────────────────────────────
+    const SVG = {
+      heart:    `<svg class="inline w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`,
+      repost:   `<svg class="inline w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`,
+      message:  `<svg class="inline w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+      eye:      `<svg class="inline w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
+      warn:     `<svg class="inline w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+      clipboard:`<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="12" y1="11" x2="16" y2="11"/><line x1="12" y1="16" x2="16" y2="16"/><line x1="8" y1="11" x2="8.01" y2="11"/><line x1="8" y1="16" x2="8.01" y2="16"/></svg>`,
+      star:     `<svg class="inline w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
+      trending: `<svg class="inline w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`,
+      target:   `<svg class="inline w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>`,
+    };
+
+    function smoothScroll(el) {
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth' });
+    }
 
     function pad2(value) {
       return String(value).padStart(2, '0');
@@ -354,6 +388,7 @@
       setProgressStatus('Connecting...', false);
       document.getElementById('results').classList.add('hidden');
       document.getElementById('errorBox').classList.add('hidden');
+      document.getElementById('sessionBanner').classList.add('hidden');
 
       let data;
       try {
@@ -440,6 +475,8 @@
         case 'done': {
           if (currentES) { currentES.close(); currentES = null; }
           document.getElementById('progressArea').classList.add('hidden');
+          updateXStatus(true);
+          document.getElementById('sessionBanner').classList.add('hidden');
           currentResult = msg;
           const isDigest = _digestMode;
           _digestMode = false;
@@ -448,7 +485,7 @@
           if (isDigest) {
             const dp = document.getElementById('digestPanel');
             if (dp && !dp.classList.contains('hidden')) {
-              dp.scrollIntoView({ behavior: 'smooth' });
+              dp.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
             }
           }
           break;
@@ -574,7 +611,7 @@
           </button>
           <button type="button"
             data-name="${escAttr(name)}"
-            onclick="deleteWatchlist(this.dataset.name)"
+            onclick="deleteWatchlist(this, this.dataset.name)"
             class="pr-2 pl-1 py-1 text-slate-500 hover:text-red-400 transition-colors rounded-r-full">×</button>
         </span>`;
       }).join('');
@@ -624,12 +661,23 @@
       }
     }
 
-    async function deleteWatchlist(name) {
-      if (!confirm(`Delete watchlist "${name}"?`)) return;
-      try {
-        await fetch('/watchlists/' + encodeURIComponent(name), { method: 'DELETE' });
-        loadWatchlists();
-      } catch (e) { /* ignore */ }
+    async function deleteWatchlist(btn, name) {
+      if (btn.dataset.confirming) {
+        try {
+          await fetch('/watchlists/' + encodeURIComponent(name), { method: 'DELETE' });
+          loadWatchlists();
+        } catch (e) { /* ignore */ }
+        return;
+      }
+      btn.dataset.confirming = '1';
+      const orig = btn.textContent;
+      btn.textContent = '✓?';
+      btn.classList.add('text-red-400', 'font-bold');
+      setTimeout(() => {
+        delete btn.dataset.confirming;
+        btn.textContent = orig;
+        btn.classList.remove('text-red-400', 'font-bold');
+      }, 2500);
     }
 
     // ── Results rendering ─────────────────────────────────────────────────────
@@ -637,15 +685,15 @@
     function switchTab(tab) {
       ['posts', 'ranked'].forEach(t => {
         document.getElementById('view-' + t).classList.toggle('hidden', t !== tab);
-        document.getElementById('tab-' + t).className = (t === tab ? 'tab-active' : 'tab-inactive')
-          + ' border-b-2 px-1 pb-2 text-sm font-semibold transition-colors';
+        const btn = document.getElementById('tab-' + t);
+        btn.className = (t === tab ? 'tab-active' : 'tab-inactive') + ' border-b-2 px-1 pb-2 text-sm font-semibold transition-colors';
+        btn.setAttribute('aria-selected', t === tab ? 'true' : 'false');
       });
     }
 
     function showError(msg) {
-      const box = document.getElementById('errorBox');
-      box.textContent = 'Error: ' + msg;
-      box.classList.remove('hidden');
+      document.getElementById('errorMsg').textContent = 'Error: ' + msg;
+      document.getElementById('errorBox').classList.remove('hidden');
     }
 
     function fmtDate(iso) {
@@ -710,6 +758,71 @@
       </div>`;
     }
 
+    // ── Sortable ranked table ─────────────────────────────────────────────────
+
+    function sortTable(col) {
+      if (_sortState.col === col) {
+        _sortState.dir = _sortState.dir === 'desc' ? 'asc' : 'desc';
+      } else {
+        _sortState.col = col;
+        _sortState.dir = 'desc';
+      }
+      if (currentResult) {
+        const combined = currentResult.result.combined_tickers || [];
+        const maxSignal = combined.reduce((acc, t) => Math.max(acc, Number(t.signal_score) || 0), 0);
+        renderCombinedTable(combined, maxSignal);
+      }
+      updateSortHeaders();
+    }
+
+    function updateSortHeaders() {
+      document.querySelectorAll('[data-sort-col]').forEach(th => {
+        const ind = th.querySelector('.sort-ind');
+        if (ind) ind.textContent = _sortState.col === th.dataset.sortCol
+          ? (_sortState.dir === 'desc' ? '▼' : '▲') : '';
+      });
+    }
+
+    function getSortedTickers(combined) {
+      if (!_sortState.col) return combined;
+      const { col, dir } = _sortState;
+      return [...combined].sort((a, b) => {
+        let av = a[col], bv = b[col];
+        if (av == null) av = dir === 'desc' ? -Infinity : Infinity;
+        if (bv == null) bv = dir === 'desc' ? -Infinity : Infinity;
+        if (typeof av === 'string') return dir === 'desc' ? bv.localeCompare(av) : av.localeCompare(bv);
+        return dir === 'desc' ? bv - av : av - bv;
+      });
+    }
+
+    function renderCombinedTable(combined, maxSignal) {
+      const sorted = getSortedTickers(combined);
+      const tbody = document.getElementById('combinedTable');
+      if (sorted.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="px-4 py-8 text-center text-slate-500">No US stock tickers found</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = sorted.map((t, i) => {
+        const accs = Object.keys(t.sources || {}).map(a => `@${a}`).join(', ');
+        const susp = t.price_suspicious
+          ? `<span title="Suspicious price move — verify before trusting" class="text-yellow-500 ml-1">${SVG.warn}</span>` : '';
+        const rowTone = t.low_confidence ? 'bg-amber-950/10' : '';
+        return `<tr class="border-b border-slate-800 hover:bg-slate-800/40 transition-colors ${rowTone}">
+          <td class="px-4 py-3 text-slate-500">${i + 1}</td>
+          <td class="px-4 py-3 font-bold ticker-accent text-base" title="${escAttr(t.company || '')}">
+            $${escHtml(t.ticker)}${marketBadge(t.market_state)}${newBadge(t.is_new_today)}${lowConfBadge(t.low_confidence)}
+          </td>
+          <td class="px-4 py-3 text-sm">${signalCell(t.signal_score, maxSignal)}</td>
+          <td class="px-4 py-3 text-sm">${sentimentCell(t)}</td>
+          <td class="px-4 py-3 text-sm">${fmtPrice(t.price, t.currency)}${susp}</td>
+          <td class="px-4 py-3 text-sm">${fmtChange(t.change_pct, t.change_abs)}</td>
+          <td class="px-4 py-3 text-white font-semibold">${t.total_mentions}</td>
+          <td class="px-4 py-3 text-slate-400 text-xs">${escHtml(accs)}</td>
+        </tr>`;
+      }).join('');
+      updateSortHeaders();
+    }
+
     // ── Daily digest ──────────────────────────────────────────────────────────
 
     function sentimentDot(label) {
@@ -749,7 +862,7 @@
       if (!digest) {
         if (digestError) {
           panel.innerHTML = `<div class="bg-red-900/20 border border-red-800 rounded-xl p-4 mb-4">
-            <div class="text-red-400 font-semibold mb-1">⚠ Digest generation failed</div>
+            <div class="text-red-400 font-semibold mb-1 flex items-center gap-1.5">${SVG.warn} Digest generation failed</div>
             <div class="text-xs text-gray-400">${escHtml(digestError)}</div>
           </div>`;
           panel.classList.remove('hidden');
@@ -772,10 +885,10 @@
         ? `<span class="text-sky-200/80 text-xs">${Math.round(t.conviction_score * 100)}% conv</span>` : '';
 
       const body = [
-        section('🆕 New today', digest.new_today, 'text-emerald-400', t => digestChip(t)),
-        section('🚀 Accelerating', digest.accelerating, 'text-orange-400',
+        section(`${SVG.star} New today`, digest.new_today, 'text-emerald-400', t => digestChip(t)),
+        section(`${SVG.trending} Accelerating`, digest.accelerating, 'text-orange-400',
           t => digestChip(t, `<span class="text-orange-300 text-xs">${t.today_mentions}↑ vs ${t.prior_avg}/d (${t.accel_factor || ''}×)</span>`)),
-        section('🎯 Top conviction', digest.top_conviction, 'text-blue-400',
+        section(`${SVG.target} Top conviction`, digest.top_conviction, 'text-blue-400',
           t => digestChip(t, `${convPct(t)}<span class="text-slate-500 text-xs">${t.accounts} acct${t.accounts === 1 ? '' : 's'}</span>`)),
         section('▲ Bullish', digest.bullish, 'text-green-400', t => digestChip(t)),
         section('▼ Bearish', digest.bearish, 'text-red-400', t => digestChip(t)),
@@ -785,7 +898,7 @@
         '<div class="text-slate-500 text-xs">No notable signals in this window — try a wider scan window or more accounts.</div>';
 
       const warning = digestWarning
-        ? `<div class="text-yellow-500/70 text-xs mb-2">⚠ ${escHtml(digestWarning)}</div>` : '';
+        ? `<div class="text-yellow-500/70 text-xs mb-2 flex items-center gap-1">${SVG.warn} ${escHtml(digestWarning)}</div>` : '';
 
       const priceTs = priceFetchTime
         ? `<div class="text-xs text-slate-500 mt-2 pt-2 border-t border-slate-800">Prices as of ${new Date(priceFetchTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>` : '';
@@ -793,7 +906,7 @@
       panel.innerHTML = `<div class="bg-slate-900/95 border border-emerald-900/40 rounded-xl p-5">
         <div class="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
           <div class="flex items-center gap-2">
-            <span class="text-base font-bold text-white">📋 Daily Digest</span>
+            <span class="text-base font-bold text-white flex items-center gap-1.5">${SVG.clipboard} Daily Digest</span>
             <span class="text-xs text-slate-400">${escHtml(digest.date || '')}</span>
           </div>
           <span class="text-xs text-slate-400">${(digest.accounts || []).length} account(s) · ${digest.total_tickers || 0} tickers</span>
@@ -827,29 +940,7 @@
 
       renderPostsFeed(result);
 
-      const tbody = document.getElementById('combinedTable');
-      if (combined.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="px-4 py-8 text-center text-slate-500">No US stock tickers found</td></tr>`;
-      } else {
-        tbody.innerHTML = combined.map((t, i) => {
-          const accs = Object.keys(t.sources || {}).map(a => `@${a}`).join(', ');
-          const susp = t.price_suspicious
-            ? '<span title="Suspicious price move — verify before trusting" class="text-yellow-500 ml-1">⚠</span>' : '';
-          const rowTone = t.low_confidence ? 'bg-amber-950/10' : '';
-          return `<tr class="border-b border-slate-800 hover:bg-slate-800/40 transition-colors ${rowTone}">
-            <td class="px-4 py-3 text-slate-500">${i + 1}</td>
-            <td class="px-4 py-3 font-bold ticker-accent text-base" title="${escAttr(t.company || '')}">
-              $${escHtml(t.ticker)}${marketBadge(t.market_state)}${newBadge(t.is_new_today)}${lowConfBadge(t.low_confidence)}
-            </td>
-            <td class="px-4 py-3 text-sm">${signalCell(t.signal_score, maxSignal)}</td>
-            <td class="px-4 py-3 text-sm">${sentimentCell(t)}</td>
-            <td class="px-4 py-3 text-sm">${fmtPrice(t.price, t.currency)}${susp}</td>
-            <td class="px-4 py-3 text-sm">${fmtChange(t.change_pct, t.change_abs)}</td>
-            <td class="px-4 py-3 text-white font-semibold">${t.total_mentions}</td>
-            <td class="px-4 py-3 text-slate-400 text-xs">${escHtml(accs)}</td>
-          </tr>`;
-        }).join('');
-      }
+      renderCombinedTable(combined, maxSignal);
 
       const accountSection = document.getElementById('accountBreakdownSection');
       const accountDiv = document.getElementById('accountResults');
@@ -933,7 +1024,7 @@
 
       switchTab('posts');
       document.getElementById('results').classList.remove('hidden');
-      document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+      document.getElementById('results').scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     }
 
     // Flattened chronological feed of every account's full posts for the day.
@@ -984,10 +1075,10 @@
     function postCard(p, account) {
       const dateStr = p.posted_at ? fmtDate(p.posted_at) : '';
       const eng = [
-        p.likes   != null ? `♥ ${p.likes}`   : '',
-        p.reposts != null ? `↺ ${p.reposts}` : '',
-        p.replies != null ? `💬 ${p.replies}` : '',
-        p.views   != null ? `👁 ${p.views}`   : '',
+        p.likes   != null ? `${SVG.heart} ${p.likes}`   : '',
+        p.reposts != null ? `${SVG.repost} ${p.reposts}` : '',
+        p.replies != null ? `${SVG.message} ${p.replies}` : '',
+        p.views   != null ? `${SVG.eye} ${p.views}`   : '',
       ].filter(Boolean).join('  ');
       const link = p.url ? `<a href="${escHtml(p.url)}" target="_blank" rel="noopener" class="text-blue-500 hover:underline">↗ open</a>` : '';
       const repostBadge = p.is_repost ? '<span class="text-xs text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">↺ repost</span>' : '';
@@ -1085,7 +1176,7 @@
         const result = await resp.json();
         currentResult = { result, saved_as: filename };
         renderResults(result);
-        document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+        document.getElementById('results').scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
       } catch (e) {
         showError('Could not load result: ' + e.message);
       }
