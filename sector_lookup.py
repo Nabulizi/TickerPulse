@@ -9,7 +9,7 @@ from market_data import get_market_data
 
 
 def lookup_sectors(tickers: list) -> dict:
-    md = get_market_data(tickers)
+    md = get_market_data(tickers, include_profiles=True)
     return {
         t: {
             "sector": d["sector"],

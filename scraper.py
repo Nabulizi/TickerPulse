@@ -931,6 +931,21 @@ async def _read_text(article) -> str:
     return ""
 
 
+def _timeline_load_error(username: str, body: str) -> ValueError:
+    text = (body or "").lower()
+    if "doesn't exist" in text or "account suspended" in text:
+        return ValueError(f"Account @{username} not found or suspended")
+    if "protected" in text:
+        return ValueError(f"Account @{username} has protected tweets")
+    if "rate limit" in text or "try again later" in text:
+        return ValueError(f"X temporarily rate-limited @{username}'s timeline")
+    if "something went wrong" in text or "retry" in text or "reload" in text:
+        return ValueError(f"X temporarily failed to render @{username}'s timeline")
+    if "log in" in text or "sign in" in text:
+        return ValueError(f"X stopped showing @{username}'s timeline because the session is no longer fully authenticated")
+    return ValueError(f"Could not load timeline for @{username}")
+
+
 async def _fetch_posts(
     page,
     username: str,
@@ -949,15 +964,20 @@ async def _fetch_posts(
     """
     await page.goto(f"https://x.com/{username}", wait_until="domcontentloaded")
 
-    try:
-        await page.wait_for_selector('article[data-testid="tweet"]', timeout=15000)
-    except PWTimeout:
-        body = await page.inner_text("body")
-        if "doesn't exist" in body or "account suspended" in body.lower():
-            raise ValueError(f"Account @{username} not found or suspended")
-        if "protected" in body.lower():
-            raise ValueError(f"Account @{username} has protected tweets")
-        raise ValueError(f"Could not load timeline for @{username}")
+    for attempt in range(2):
+        try:
+            await page.wait_for_selector('article[data-testid="tweet"]', timeout=15000)
+            break
+        except PWTimeout:
+            body = await page.inner_text("body")
+            if attempt == 0 and not any(
+                token in (body or "").lower()
+                for token in ("doesn't exist", "account suspended", "protected")
+            ):
+                await page.reload(wait_until="domcontentloaded")
+                await asyncio.sleep(1.0)
+                continue
+            raise _timeline_load_error(username, body)
 
     # Let the full initial viewport render — wait_for_selector fires on the FIRST
     # article, but React may still be painting the rest of the visible posts.

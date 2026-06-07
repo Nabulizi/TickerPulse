@@ -172,7 +172,7 @@ def _fresh(rec: dict, good_ttl: float) -> bool:
     return (time.time() - rec.get("_ts", 0)) < ttl
 
 
-def get_market_data(tickers: list) -> dict:
+def get_market_data(tickers: list, *, include_profiles: bool = False) -> dict:
     """
     Return {ticker: {price, prev_close, change_abs, change_pct, currency,
     market_state, suspicious, sector, industry, company}} for each ticker.
@@ -187,7 +187,9 @@ def get_market_data(tickers: list) -> dict:
         profile_cache = _load(PROFILE_CACHE)
 
     need_price = [t for t in tickers if not _fresh(price_cache.get(t), PRICE_TTL)]
-    need_profile = [t for t in tickers if not _fresh(profile_cache.get(t), PROFILE_TTL)]
+    need_profile = []
+    if include_profiles:
+        need_profile = [t for t in tickers if not _fresh(profile_cache.get(t), PROFILE_TTL)]
 
     new_price, new_profile = {}, {}
 
@@ -215,7 +217,8 @@ def get_market_data(tickers: list) -> dict:
                 except Exception:
                     sink[t] = None
 
-    _run_profiles(need_profile, new_profile)
+    if include_profiles:
+        _run_profiles(need_profile, new_profile)
 
     with _lock:
         price_cache = _load(PRICE_CACHE)
@@ -224,15 +227,16 @@ def get_market_data(tickers: list) -> dict:
                 price_cache[t] = rec
         _atomic_write(PRICE_CACHE, price_cache)
 
-        profile_cache = _load(PROFILE_CACHE)
-        for t, rec in new_profile.items():
-            # Never let a failed lookup overwrite a previously-good profile.
-            if rec is None:
-                continue
-            existing = profile_cache.get(t)
-            if rec.get("ok") or not (existing and existing.get("ok")):
-                profile_cache[t] = rec
-        _atomic_write(PROFILE_CACHE, profile_cache)
+        if include_profiles:
+            profile_cache = _load(PROFILE_CACHE)
+            for t, rec in new_profile.items():
+                # Never let a failed lookup overwrite a previously-good profile.
+                if rec is None:
+                    continue
+                existing = profile_cache.get(t)
+                if rec.get("ok") or not (existing and existing.get("ok")):
+                    profile_cache[t] = rec
+            _atomic_write(PROFILE_CACHE, profile_cache)
 
     out = {}
     for t in tickers:
