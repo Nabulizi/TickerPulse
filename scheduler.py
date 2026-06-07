@@ -44,10 +44,23 @@ _lock = threading.Lock()
 def is_market_hours(dt=None) -> bool:
     """Return True if NYSE is currently open (Mon–Fri 09:30–16:00 ET)."""
     now = dt or datetime.now(ET)
-    if now.weekday() >= 5:          # Saturday=5, Sunday=6
+    if now.weekday() >= 5:
         return False
     t = (now.hour, now.minute)
     return MARKET_OPEN <= t < MARKET_CLOSE
+
+
+def market_session(dt=None) -> str:
+    """Return a human-readable label for the current market session."""
+    now = dt or datetime.now(ET)
+    if now.weekday() >= 5:
+        return "weekend"
+    t = (now.hour, now.minute)
+    if t < MARKET_OPEN:
+        return "pre-market"
+    if t >= MARKET_CLOSE:
+        return "after-hours"
+    return "market-open"
 
 
 def _next_interval() -> int:

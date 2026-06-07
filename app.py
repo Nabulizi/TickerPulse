@@ -549,6 +549,7 @@ def auto_scan_status():
         "last_tickers": s["last_tickers"],
         "last_error": s["last_error"],
         "market_hours": scheduler.is_market_hours(),
+        "market_session": scheduler.market_session(),
     })
 
 

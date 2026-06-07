@@ -1207,6 +1207,13 @@
       return m > 0 ? `${h}h ${m}m` : `${h}h`;
     }
 
+    const SESSION_STYLE = {
+      'market-open':  { cls: 'border-emerald-800 bg-emerald-950/40 text-emerald-400', label: 'Market open' },
+      'pre-market':   { cls: 'border-amber-800 bg-amber-950/30 text-amber-400',       label: 'Pre-market'  },
+      'after-hours':  { cls: 'border-amber-800 bg-amber-950/30 text-amber-400',       label: 'After hours' },
+      'weekend':      { cls: 'border-slate-700 bg-slate-900 text-slate-400',          label: 'Weekend'     },
+    };
+
     async function refreshAutoScanStatus() {
       try {
         const resp = await fetch('/auto-scan/status');
@@ -1216,15 +1223,12 @@
         badge.classList.remove('hidden');
         const countdown = fmtCountdown(d.seconds_until_next);
         if (d.enabled) {
-          const mh = d.market_hours;
-          badge.textContent = `● Auto · ${countdown}`;
-          badge.className = `text-xs px-2 py-1 rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500/50 cursor-pointer ${
-            mh ? 'border-emerald-800 bg-emerald-950/40 text-emerald-400'
-               : 'border-slate-700 bg-slate-900 text-slate-400'
-          }`;
-          badge.title = `Auto-scan enabled · next in ${countdown}${mh ? ' (market hours)' : ' (off-hours)'}. Click to disable.`;
+          const s = SESSION_STYLE[d.market_session] || SESSION_STYLE['weekend'];
+          badge.textContent = `● ${s.label} · next ${countdown}`;
+          badge.className = `text-xs px-2 py-1 rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500/50 cursor-pointer ${s.cls}`;
+          badge.title = `Auto-scan on · ${s.label} · next scan in ${countdown}. Click to disable.`;
         } else {
-          badge.textContent = '○ Auto · off';
+          badge.textContent = '○ Auto-scan off';
           badge.className = 'text-xs px-2 py-1 rounded border border-slate-700 bg-slate-900 text-slate-500 transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500/50 cursor-pointer';
           badge.title = 'Auto-scan disabled. Click to enable.';
         }
