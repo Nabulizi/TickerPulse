@@ -318,3 +318,85 @@ updated the badge to display both the label and a colour:
 | After close (weekday ≥ 16:00 ET) | `● After hours · next 5h` | Amber |
 | Saturday or Sunday | `● Weekend · next 5h 59m` | Gray |
 | Scheduler disabled | `○ Auto-scan off` | Dim |
+
+---
+
+# Reliability, sparklines & account scorecard (2026-06-07)
+
+## 23. `scheduler.py` — session expiry notification
+
+**Problem:** if the X session expired during an overnight or weekend auto-scan,
+the error was caught and stored in `last_error` but the user had no way of
+knowing until they opened the dashboard — potentially missing market open.
+
+**Fix:** `SessionExpired` and `InteractiveLoginRequired` are now caught
+separately in the scheduler loop and trigger a dedicated macOS notification
+with a **Basso** sound (distinct from the normal Ping signal alert):
+
+```
+X Monitor · Session expired
+Open the dashboard and reconnect your X account before market open.
+```
+
+Also refactored the two notification paths to share a single `_osascript()`
+helper.
+
+## 24. `scheduler.py` — rolling 24-hour scan window
+
+**Problem:** auto-scans used `since = today midnight UTC`. For users in
+timezones ahead of UTC, posts from "yesterday evening local time" were never
+picked up, and scans running right after midnight always started with an
+almost-empty window.
+
+**Fix:** replaced the midnight anchor with a rolling `now - 24 hours` window.
+Every auto-scan now covers a full 24-hour period regardless of when it runs or
+what timezone the user is in.
+
+## 25. `scheduler.py` — nightly forward-return backfill
+
+`store.update_forward_returns()` was never called anywhere, meaning the account
+scorecard (§27 below) would never have data to display.
+
+**Fix:** the scheduler loop now checks once per cycle whether a backfill is due
+(`_should_run_returns_update()`) and runs it at or after 2 AM ET, at most once
+per calendar day. The backfill fetches closing prices for all tracked ticker
+mentions old enough to measure (1d/5d/20d) and writes the returns back to
+`data/scraper.db`. Failures are caught and silently skipped — the backfill
+never crashes the scheduler.
+
+## 26. `app.py` — `/velocity/batch` and `/scorecard` endpoints
+
+- **`GET /velocity/batch?tickers=A,B,C&days=7`** — returns daily mention
+  counts for up to 50 tickers in a single request. Validates each symbol
+  against the `^[A-Z]{1,5}$` pattern before hitting the DB. Used by the
+  sparkline renderer to avoid N individual requests after each scan.
+- **`GET /scorecard?min_calls=N`** — exposes `store.account_scorecard()`,
+  returning accounts ranked by their average forward return on non-trailing-tag
+  calls. Requires `min_calls` qualifying mentions (default 3).
+
+## 27. `templates/index.html` — 7-day trend sparklines
+
+A new **7d Trend** column in the Ranked Tickers table shows a mini SVG
+sparkline per ticker: 7 daily mention counts rendered as a polyline, coloured
+green if yesterday's count was ≥ the day before, gray otherwise.
+
+Sparklines are fetched asynchronously via `/velocity/batch` after the main
+table renders, so they never delay scan results appearing. If the persistence
+store is unavailable the column degrades gracefully to `—`.
+
+## 28. `templates/index.html` — Account Scorecard panel
+
+An **Account Scorecard** button in the header opens a collapsible panel that
+loads `/scorecard` on demand and displays each tracked account's performance:
+
+| Column | What it shows |
+|---|---|
+| Calls | Number of qualifying ticker mentions |
+| Avg 1d | Average next-day return across all calls |
+| Avg 5d | Average 5-day return (primary ranking key) |
+| Avg 20d | Average 20-day return |
+| Win % (5d) | Share of calls that were green 5 days out |
+
+Values are colour-coded (green positive, red negative). The panel notes that
+data populates after a few days of scan history and the nightly 2 AM ET
+backfill (§25) keeps it current.
