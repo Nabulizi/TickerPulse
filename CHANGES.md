@@ -131,3 +131,73 @@ prior pass (see §3 above) but the README still described it. Removed:
 - "Groups tickers by sector"
 - `sector_cache.json` row from the Caching table
 - "sector" from the Usage step 5 and output file description
+
+---
+
+# UI/UX improvements (2026-06-07)
+
+## 10. `templates/index.html` — typography upgrade
+
+Loaded **Fira Code** (headings/tickers) and **Fira Sans** (body) from Google
+Fonts. Ticker symbols (`.ticker-accent`) now render in a monospaced face,
+making prices and symbols scannable at a glance. Body text uses a clean
+sans-serif matched to the data-dashboard style.
+
+## 11. `templates/index.html` — accessibility pass
+
+- **Focus rings:** all `<input>`, `<select>`, and `<textarea>` elements had
+  `focus:outline-none` with no replacement; added `focus:ring-2
+  focus:ring-sky-500/50` so keyboard users always see where they are.
+- **Form semantics:** input card wrapped in `<form onsubmit>` — pressing Enter
+  in the accounts textarea now submits the scan. `<label for="usernames">`
+  linked to the textarea.
+- **ARIA roles:** `role="tablist"` / `role="tab"` / `aria-selected` on the
+  Posts / Ranked Tickers tabs; `scope="col"` on all `<th>` elements.
+- **Live regions:** `role="alert"` + `aria-live="assertive"` on the error box
+  (with a dismiss button); `role="alert"` on the session-expired banner;
+  `aria-live="polite"` + `aria-label` on the scan progress log.
+- **Semantic elements:** recent-run `<a href="#">` links replaced with
+  `<button type="button">` elements.
+
+## 12. `templates/index.html` — emoji → SVG icons
+
+All structural emoji replaced with inline Lucide SVGs defined in a shared
+`SVG` constant map. Affected locations:
+
+| Was | Now |
+|-----|-----|
+| `📋` Daily Digest button & panel header | ClipboardList SVG |
+| `🆕` New today section label | Star SVG |
+| `🚀` Accelerating section label | TrendingUp SVG |
+| `🎯` Top conviction section label | Target SVG |
+| `♥ ↺ 💬 👁` post engagement stats | Heart / Repeat / MessageSquare / Eye SVGs |
+| `⚠` suspicious price & digest error | AlertTriangle SVG |
+
+SVGs are theme-aware (`stroke="currentColor"`), scale cleanly, and can be
+styled with design tokens — unlike emoji which are font-dependent and
+inconsistent across OS/browser.
+
+## 13. `templates/index.html` — reduced-motion support
+
+- `@media (prefers-reduced-motion: reduce)` CSS rule disables the
+  `animate-spin` loader for users with vestibular/motion sensitivity.
+- All `scrollIntoView({ behavior: 'smooth' })` calls now check
+  `window.matchMedia('(prefers-reduced-motion: reduce)')` and fall back to
+  `'auto'` when the OS setting is on.
+
+## 14. `templates/index.html` — sortable ranked table
+
+Ranked Tickers table columns (Ticker, Signal, Mood, Price, Change, Mentions,
+Accounts) are now clickable to sort ascending or descending. Sort direction
+is shown with a ▲/▼ indicator in the active column header. State is held in
+`_sortState` and re-renders via the extracted `renderCombinedTable()` function
+without re-fetching data.
+
+## 15. `templates/index.html` — interaction improvements
+
+- **Watchlist delete:** browser `confirm()` dialog replaced with an inline
+  two-tap pattern — first click shows `✓?` on the × button for 2.5 s; a
+  second click within that window commits the delete. No modal, no focus
+  disruption.
+- **Watchlist name input:** `event.preventDefault()` added to the Enter
+  handler so the outer scan form is not inadvertently submitted.
