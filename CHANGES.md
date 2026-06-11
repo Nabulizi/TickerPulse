@@ -400,3 +400,81 @@ loads `/scorecard` on demand and displays each tracked account's performance:
 Values are colour-coded (green positive, red negative). The panel notes that
 data populates after a few days of scan history and the nightly 2 AM ET
 backfill (§25) keeps it current.
+
+## 29. `pipeline.py` — auto-scans now feed the time-series DB
+
+**Problem:** the scheduler had its own ad-hoc ticker counting and never called
+`store.record_run()`. Hourly auto-scans contributed nothing to the SQLite time
+series, so velocity sparklines, "new today" flags, acceleration detection and
+the account scorecard were built only from whenever the user happened to click
+Scan in the dashboard.
+
+**Fix:** the post-scrape processing (extract → combine → enrich with prices →
+finalize signal fields → `store.record_run`) was extracted from `app.py` into
+a shared `pipeline.process_scrape_results()`. Manual scans, auto-scans and CLI
+scans all run the exact same pipeline now, so every scan persists mentions
+(including `price_at_mention` for the scorecard).
+
+## 30. `pipeline.py` — scrape lock prevents concurrent X sessions
+
+**Problem:** a manual scan could start while an auto-scan was mid-flight.
+That meant two headless Chromium sessions logged into the same X account
+simultaneously (a flag-worthy automation signal), both racing to overwrite
+`session.json` via `context.storage_state()` at the end of the run.
+
+**Fix:** a shared `pipeline.SCRAPE_LOCK` is held for the duration of any
+scrape. The `/scrape` route returns 429 if it can't acquire it; the scheduler
+skips the cycle and retries on the next tick; the CLI exits with an error.
+
+## 31. `scheduler.py` — tick-based loop replaces monolithic sleep
+
+**Problem:** the loop computed an interval and slept it in one
+`time.sleep(interval)` call. An off-hours 6-hour sleep that started at 8 AM ET
+slept straight through the 9:30 market open; there was no scan for the first
+full interval after startup; and enable/disable only took effect after the
+current sleep expired.
+
+**Fix:** the loop wakes every 30 seconds and recomputes the due time
+(`_next_due_at` = last scan + interval for the CURRENT session). When the
+market opens, the 1-hour market interval applies immediately. The nightly
+forward-returns backfill is also checked every tick, so it no longer waits up
+to 6 hours past 2 AM ET.
+
+## 32. `market_data.py` — dead sector/profile code removed
+
+Sector/industry enrichment via yfinance `.info` was dropped from the scan
+pipeline some time ago (slow, unreliable), but `sector_lookup.py`, the
+`include_profiles` machinery and the 30-day profile cache all remained. The
+dead path is now deleted; `_yf_session` stays (used by the returns backfill).
+Output keys (`sector`, `industry`, `company`) keep light defaults so existing
+consumers don't break.
+
+## 33. `scheduler.py` — optional Telegram notifications
+
+macOS notifications are gone if you're away from the machine. When
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in `.env`, auto-scan
+signals and session-expiry alerts are also delivered via Telegram
+(best-effort, never raises, message capped at 4000 chars).
+
+## 34. `scan.py` — terminal CLI
+
+`python3 scan.py mywatchlist` (or explicit usernames) runs a scan without the
+browser dashboard: same pipeline, same DB persistence, ranked table printed to
+the terminal. Supports `--count`, `--since`, `--list-watchlists`, and respects
+the scrape lock.
+
+## 35. `install_launchd.sh` + `launchd/` — run as a macOS login agent
+
+`./install_launchd.sh` installs the app as a launchd agent (start on login,
+restart on crash, logs in `data/launchd.log`), so the hourly auto-scan
+actually runs all day instead of depending on a manually-started terminal.
+
+## 36. Small fixes
+
+- `/velocity/<ticker>` and `/velocity/batch` accept share-class symbols
+  (`BRK.B`) that the extractor deliberately preserves.
+- `curl_cffi` added to `requirements.txt` (previously a silent optional
+  dependency — without it Yahoo rate-limit avoidance quietly degraded).
+- CI runs the offline suites via `pytest` (`test_pipeline.py`,
+  `test_scheduler.py`, `test_cli.py` added alongside the existing two).
+- Removed unused imports flagged by pyflakes (`store.py`, `scraper.py`).

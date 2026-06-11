@@ -13,10 +13,8 @@ Fully optional and import-safe: app.py calls record_run() inside try/except,
 so any failure here never breaks a scan.
 """
 import hashlib
-import json
 import sqlite3
 import threading
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional

@@ -1,35 +1,45 @@
 # X Ticker Scraper
 
-A web app that scrapes posts from X (Twitter) accounts, extracts US stock ticker mentions, and enriches them with real-time price data and sector information.
+A web app that scrapes posts from X (Twitter) accounts, extracts US stock ticker mentions, and enriches them with real-time price data and signal scoring.
 
 ## What It Does
 
 - Scrapes posts from one or more X accounts using Playwright (headless browser)
 - Extracts US stock tickers using both `$CASHTAG` patterns and plain uppercase symbols, validated against the SEC's official ticker list
 - Enriches results with live price data (via yfinance)
-- Tracks which accounts mentioned each ticker
+- Tracks which accounts mentioned each ticker and ranks by conviction, not raw counts
 - Streams progress to the browser via Server-Sent Events (SSE)
 - Saves every scan as a JSON file in `output/` and shows the 10 most recent runs on the dashboard
-- Supports per-user watchlists
+- Persists every scan (manual, auto, and CLI) to a SQLite time series powering velocity sparklines, "new today" flags, and an account scorecard with forward returns
+- Auto-scans saved watchlists hourly during market hours, with macOS and optional Telegram notifications
+- Supports per-user watchlists and a terminal CLI (`scan.py`)
 
 ## Project Structure
 
 ```
 .
 ├── app.py               # Flask web server — API routes and SSE streaming
+├── pipeline.py          # Shared scan pipeline (combine/enrich/persist) + scrape lock
 ├── scraper.py           # Playwright-based X scraper with session caching
+├── scheduler.py         # Background auto-scan loop + notifications
+├── scan.py              # Terminal CLI — scan watchlists/accounts without the browser
 ├── ticker_extractor.py  # Ticker detection with blocklist filtering
+├── signals.py           # Per-mention sentiment + conviction scoring
+├── store.py             # SQLite time series (velocity, first-seen, scorecard)
 ├── tickers_db.py        # SEC ticker list loader with 7-day local cache
-├── price_lookup.py      # yfinance price fetcher with 5-min cache
-├── sector_lookup.py     # yfinance sector/industry fetcher with 30-day cache
+├── market_data.py       # Batched yfinance price fetcher with 5-min cache
+├── price_lookup.py      # Thin adapter over market_data
+├── import_cookies.py    # Build session.json from exported browser cookies
+├── install_launchd.sh   # Install as a macOS login agent (auto-start)
+├── launchd/             # launchd plist template
 ├── requirements.txt
 ├── start.sh             # Convenience launch script
 ├── templates/
 │   └── index.html       # Frontend dashboard
-├── data/                # Local caches (auto-created)
+├── data/                # Local caches + SQLite DB (auto-created)
 │   ├── us_tickers_cache.json
 │   ├── price_cache.json
-│   ├── sector_cache.json
+│   ├── scraper.db
 │   └── watchlists.json
 └── output/              # Scan results (auto-created)
 ```
@@ -89,16 +99,56 @@ python3 app.py
 
 Then open **http://localhost:8080** in your browser.
 
+### Auto-start on login (macOS)
+
+```bash
+./install_launchd.sh          # install + start as a login agent
+./install_launchd.sh remove   # uninstall
+```
+
+This keeps the app (and the hourly auto-scan scheduler) running whenever you
+are logged in, restarting it if it crashes. Logs go to `data/launchd.log`.
+
+## CLI
+
+Run a scan from the terminal without opening the dashboard:
+
+```bash
+python3 scan.py mywatchlist                    # scan a saved watchlist
+python3 scan.py some_account other_account     # scan accounts directly
+python3 scan.py --count 30 --since 2026-06-10  # all watchlists, custom depth
+python3 scan.py --list-watchlists
+```
+
+CLI scans go through the same pipeline as the dashboard, including persistence
+to the time-series DB.
+
+## Notifications
+
+Auto-scans notify when a ticker is mentioned by 2+ distinct watchlist accounts:
+
+- **macOS notification** — always, best-effort.
+- **Telegram** (optional, reaches your phone) — create a bot with
+  [@BotFather](https://t.me/BotFather), get your chat id from
+  [@userinfobot](https://t.me/userinfobot), then add to `.env`:
+
+```env
+TELEGRAM_BOT_TOKEN=123456:ABC-your-bot-token
+TELEGRAM_CHAT_ID=123456789
+```
+
+Session-expiry alerts use the same channels, so you can reconnect before the
+next market open.
+
 ## Testing
 
-Offline regression tests cover parser behavior, scan lifecycle safety, secure
-session-file writes, and persistence semantics. They do not scrape X or call
-Yahoo Finance.
+Offline regression tests cover parser behavior, scan lifecycle safety, the
+shared pipeline, scheduler timing, secure session-file writes, and persistence
+semantics. They do not scrape X or call Yahoo Finance.
 
 ```bash
 source venv/bin/activate
-python3 test_scraper_parse.py
-python3 test_safety_regressions.py
+python3 -m pytest -q test_*.py    # or run each test_*.py file directly
 ```
 
 GitHub Actions runs the same offline checks on push and pull request.

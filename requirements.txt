@@ -3,3 +3,6 @@ flask==3.0.3
 python-dotenv==1.0.1
 yfinance>=1.2.0
 lxml>=5.0.0
+# Optional but recommended: Chrome-impersonating HTTP session that avoids
+# Yahoo Finance rate limiting (market_data falls back to requests without it).
+curl_cffi>=0.7

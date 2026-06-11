@@ -15,10 +15,8 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory, stream_with_context
 
-from price_lookup import lookup_prices
+from pipeline import SCRAPE_LOCK, get_tickers_db, process_scrape_results
 from scraper import InteractiveLoginRequired, SessionExpired, scrape_accounts, session_status, validate_username
-from ticker_extractor import extract_tickers
-from tickers_db import load_tickers
 
 try:
     import store  # optional SQLite persistence (time series + scorecard)
@@ -37,24 +35,12 @@ OUTPUT_DIR = Path(__file__).parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 WATCHLISTS_FILE = Path(__file__).parent / "data" / "watchlists.json"
 
-# Thread-safe lazy-loaded ticker DB (double-checked locking)
-_tickers_db = None
-_tickers_db_lock = threading.Lock()
-
 # In-progress scan registry  {scan_id: {"queue": Queue, "final": dict|None, "ts": float}}
 _scans: dict = {}
 _scans_lock = threading.Lock()
 MAX_SCANS = 20
 MAX_ACTIVE_SCANS = 1
 SCAN_TTL = 300  # evict finished scans after 5 minutes
-
-
-def get_tickers_db() -> set:
-    global _tickers_db
-    with _tickers_db_lock:
-        if _tickers_db is None:
-            _tickers_db = load_tickers()
-        return _tickers_db
 
 
 def _prune_scans_locked() -> None:
@@ -300,9 +286,19 @@ def scrape():
         except ValueError:
             return jsonify({"error": "Invalid since_date. Use YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS."}), 400
 
+    # The scrape lock is shared with the auto-scan scheduler: it is acquired
+    # here in the request thread and released by the worker thread when the
+    # scan finishes (threading.Lock permits cross-thread release).
+    if not SCRAPE_LOCK.acquire(blocking=False):
+        return jsonify({
+            "error": "A scan is already running (possibly an automatic background scan). "
+                     "Wait for it to finish before starting another."
+        }), 429
+
     scan_id = str(uuid.uuid4())
     q: queue.Queue = queue.Queue(maxsize=200)
     if not _register_scan(scan_id, q):
+        SCRAPE_LOCK.release()
         return jsonify({
             "error": "A scan is already running. Wait for it to finish before starting another."
         }), 429
@@ -325,137 +321,16 @@ def scrape():
             _complete_scan(scan_id, {"type": "error", "message": str(exc)})
             return
 
-        valid_tickers = get_tickers_db()
-
-        run: dict = {
-            "run_at": datetime.now(timezone.utc).isoformat(),
-            "accounts_analyzed": valid_usernames,
-            "scan_settings": {
-                "max_posts": count,
-                "since_date": since_raw or None,
-                "client_timezone": client_timezone or None,
-            },
-            "results": {},
-            "combined_tickers": [],
-            "by_sector": {},
-        }
-
-        combined: dict = {}
-
-        for username, data in scraped.items():
-            if data["error"]:
-                run["results"][username] = {
-                    "posts_analyzed": 0,
-                    "posts": [],
-                    "tickers": [],
-                    "error": data["error"],
-                }
-                continue
-
-            tickers = extract_tickers(data["posts"], valid_tickers)
-            run["results"][username] = {
-                "posts_analyzed": len(data["posts"]),
-                "stopped_by": data.get("stopped_by"),
-                "last_post_date": data.get("last_post_date"),
-                "follower_count": data.get("follower_count"),
-                "posts": data["posts"],
-                "tickers": tickers,
-                "error": None,
-            }
-
-            for t in tickers:
-                entry = combined.setdefault(
-                    t["ticker"],
-                    {"ticker": t["ticker"], "total_mentions": 0,
-                     "cashtag_mentions": 0, "signal_score": 0.0,
-                     "net_sentiment": 0.0, "sources": {}},
-                )
-                entry["total_mentions"] += t["mentions"]
-                entry["cashtag_mentions"] += t.get("cashtag_mentions", 0)
-                entry["signal_score"] += t.get("signal_score", 0.0)
-                entry["net_sentiment"] += t.get("net_sentiment", 0.0)
-                entry["sources"][username] = t["occurrences"]
-
-        all_ticker_symbols = list(combined.keys())
-
-        if all_ticker_symbols:
-            emit({"type": "progress",
-                  "message": f"Fetching prices for {len(all_ticker_symbols)} ticker(s)..."})
-            price_map = lookup_prices(all_ticker_symbols)
-            run["price_fetch_time"] = datetime.now(timezone.utc).isoformat()
-        else:
-            price_map = {}
-
-        def _enrich(t: dict) -> None:
-            sym = t["ticker"]
-            p = price_map.get(sym, {})
-            # Sector/industry/company came from yfinance `.info`, a slow + unreliable
-            # call that was dropped (low value for daily monitoring). Keep the keys
-            # with light defaults so downstream consumers don't KeyError.
-            t["sector"]       = "Unknown"
-            t["industry"]     = "Unknown"
-            t["company"]      = sym
-            t["price"]        = p.get("price")
-            t["change_pct"]   = p.get("change_pct")
-            t["change_abs"]   = p.get("change_abs")
-            t["currency"]     = p.get("currency",     "USD")
-            t["market_state"] = p.get("market_state", "UNKNOWN")
-            t["price_suspicious"] = p.get("suspicious", False)
-
-        for data in run["results"].values():
-            if not data["error"]:
-                for t in data["tickers"]:
-                    _enrich(t)
-
-        # Finalize derived signal fields and rank by CONVICTION, not raw counts:
-        # distinct accounts first (kills single-account cashtag spam like $TSLA),
-        # then aggregate signal_score, then total mentions as a tiebreaker.
-        for entry in combined.values():
-            entry["accounts"] = len(entry["sources"])
-            # Normalize signal_score to avg-per-mention so it's comparable across
-            # tickers with different mention counts and numbers of accounts.
-            # Without this, summing per-account signal scores creates an arbitrary
-            # number that grows with mention volume, not signal quality.
-            entry["signal_score"] = round(
-                entry["signal_score"] / max(entry["total_mentions"], 1), 3
-            )
-            entry["net_sentiment"] = round(entry["net_sentiment"], 2)
-            entry["sentiment_label"] = (
-                "bullish" if entry["net_sentiment"] > 0.15
-                else "bearish" if entry["net_sentiment"] < -0.15
-                else "mixed/neutral"
-            )
-            # Low-confidence: one account, no cashtag, weak signal — surface but de-rank.
-            entry["low_confidence"] = (
-                entry["accounts"] == 1
-                and entry["cashtag_mentions"] == 0
-            )
-            # Conviction score: fraction of occurrences that are high-quality signals
-            # (cashtag confidence + not a trailing tag). Used to rank TOP CONVICTION.
-            total_occ = sum(len(occs) for occs in entry["sources"].values())
-            high_conv = sum(
-                1 for occs in entry["sources"].values()
-                for occ in occs
-                if occ.get("confidence") == "cashtag" and not occ.get("is_trailing_tag")
-            )
-            entry["conviction_score"] = round(high_conv / max(total_occ, 1), 3)
-
-        combined_list = sorted(
-            combined.values(),
-            key=lambda x: (-x["accounts"], -x["signal_score"], -x["total_mentions"]),
+        # Combine, enrich with prices, finalize signals, persist to the store —
+        # shared with the auto-scan scheduler (pipeline.py).
+        run = process_scrape_results(
+            scraped,
+            valid_usernames,
+            count=count,
+            since_raw=since_raw,
+            client_timezone=client_timezone,
+            emit=emit,
         )
-        for entry in combined_list:
-            _enrich(entry)
-
-        run["combined_tickers"] = combined_list
-        run["by_sector"] = {}  # sector grouping removed (no more .info lookups)
-
-        if store is not None:
-            try:
-                store.record_run(run)
-            except Exception as exc:  # persistence must never break a scan
-                print(f"[!] store.record_run failed (non-fatal): {exc}")
-                run["digest_warning"] = "Database persistence failed; digest signals may be incomplete."
 
         # Digest runs AFTER record_run so today's mentions are already in the DB.
         try:
@@ -473,7 +348,13 @@ def scrape():
         done_msg = {"type": "done", "result": run, "saved_as": filename}
         _complete_scan(scan_id, done_msg)
 
-    threading.Thread(target=run_scan, daemon=True).start()
+    def run_scan_locked():
+        try:
+            run_scan()
+        finally:
+            SCRAPE_LOCK.release()
+
+    threading.Thread(target=run_scan_locked, daemon=True).start()
     return jsonify({"scan_id": scan_id})
 
 
@@ -597,7 +478,8 @@ def auto_scan_toggle():
 def velocity(ticker):
     if store is None:
         return jsonify({"error": "persistence not available"}), 503
-    if not re.match(r'^[A-Z]{1,5}$', ticker.upper()):
+    # Allow share-class symbols like BRK.B — the extractor preserves them.
+    if not re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', ticker.upper()):
         return jsonify({"error": "Invalid ticker"}), 400
     try:
         days = max(1, min(int(request.args.get("days", 7)), 90))
@@ -616,7 +498,7 @@ def velocity_batch():
         return jsonify({"error": "persistence not available"}), 503
     raw = request.args.get("tickers", "")
     tickers = [t.strip().upper() for t in raw.split(",") if t.strip()]
-    tickers = [t for t in tickers if re.match(r'^[A-Z]{1,5}$', t)][:50]
+    tickers = [t for t in tickers if re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', t)][:50]
     if not tickers:
         return jsonify({})
     try:

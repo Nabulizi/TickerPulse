@@ -119,5 +119,19 @@ def _run_all():
     print(f"{len(tests)}/{len(tests)} passed")
 
 
+def test_velocity_endpoint_accepts_share_class_tickers():
+    original_db_path = store.DB_PATH
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            store.DB_PATH = Path(tmp) / "scraper.db"
+            client = app.app.test_client()
+            assert client.get("/velocity/BRK.B").status_code == 200
+            assert client.get("/velocity/NVDA").status_code == 200
+            assert client.get("/velocity/AB%2FCD").status_code in (400, 404)
+            assert client.get("/velocity/TOOLONGG").status_code == 400
+    finally:
+        store.DB_PATH = original_db_path
+
+
 if __name__ == "__main__":
     _run_all()

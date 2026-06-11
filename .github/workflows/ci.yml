@@ -19,16 +19,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt pytest
 
       - name: Compile Python modules
         run: |
           python -m py_compile \
             app.py scraper.py ticker_extractor.py tickers_db.py \
-            price_lookup.py market_data.py sector_lookup.py signals.py \
-            store.py scheduler.py import_cookies.py
+            price_lookup.py market_data.py signals.py pipeline.py \
+            store.py scheduler.py import_cookies.py scan.py
 
       - name: Run offline regression tests
-        run: |
-          python test_scraper_parse.py
-          python test_safety_regressions.py
+        run: pytest -q test_*.py

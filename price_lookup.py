@@ -1,9 +1,9 @@
 """
 price_lookup.py — thin adapter kept for backwards compatibility.
 
-Price fetching now lives in market_data.py (single reliable fetch via
-fast_info, shared with sector lookup). This wrapper preserves the original
-lookup_prices() signature so callers don't change.
+Price fetching now lives in market_data.py (one batched yf.download call
+per scan). This wrapper preserves the original lookup_prices() signature
+so callers don't change.
 """
 from market_data import get_market_data
 
