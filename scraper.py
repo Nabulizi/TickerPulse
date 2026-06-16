@@ -271,12 +271,29 @@ def _use_google_login() -> bool:
     return _get_login_method() == "google"
 
 
+def _headless_only_mode() -> bool:
+    """
+    Return True when we should avoid any visible-browser launch.
+
+    Render containers have no X server, so any login path that falls back to a
+    headed browser will fail there. Reuse the existing headless flag so the
+    hosted deployment stays headless for both manual reconnects and automatic
+    refreshes.
+    """
+    flag = os.getenv("XTS_CONNECT_HEADLESS", "").strip().lower()
+    if flag in {"1", "true", "yes"}:
+        return True
+    return not (os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+
+
 def _should_prefer_google_login(
     *,
     x_username: str = "",
     x_password: str = "",
     x_email: str = "",
 ) -> bool:
+    if _headless_only_mode():
+        return False
     method = _get_login_method()
     if method == "google":
         return True
@@ -633,11 +650,37 @@ async def _refresh_session(progress=None) -> None:
         "message": "Cached X session unavailable — attempting automatic re-login...",
     })
     x_user, x_pass, x_email = _get_x_credentials()
+    headless_only = _headless_only_mode()
     if _should_prefer_google_login(
         x_username=x_user,
         x_password=x_pass,
         x_email=x_email,
     ):
+        if headless_only:
+            _emit(progress, {
+                "type": "progress",
+                "message": "Using Google-based X sign-in in headless mode...",
+            })
+            try:
+                await asyncio.wait_for(
+                    _save_login_session(headless=True, slow_mo=60, progress=progress),
+                    timeout=HEADLESS_REFRESH_TIMEOUT,
+                )
+            except ValueError as exc:
+                raise SessionExpired(
+                    "No X session found and automatic Google-based login is unavailable."
+                ) from exc
+            except Exception as exc:
+                raise SessionExpired(
+                    "Automatic Google-based X login failed in headless mode. "
+                    f"Reason: {exc}."
+                ) from exc
+            _emit(progress, {
+                "type": "progress",
+                "message": "Automatic X login succeeded. Refreshing session...",
+            })
+            return
+
         _emit(progress, {
             "type": "progress",
             "message": "Using Google-based X sign-in first. Opening a visible browser...",

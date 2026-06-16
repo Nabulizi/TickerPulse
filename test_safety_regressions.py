@@ -4,6 +4,7 @@ Offline regression tests for safety and persistence behavior.
 Run:
     python3 test_safety_regressions.py
 """
+import asyncio
 import os
 import queue
 import tempfile
@@ -156,6 +157,66 @@ def test_basic_auth_protects_app_when_password_is_set():
             os.environ.pop("APP_PASSWORD", None)
         else:
             os.environ["APP_PASSWORD"] = original_password
+
+
+def test_refresh_session_stays_headless_when_render_flag_is_set():
+    import scraper
+
+    original_env = {
+        k: os.environ.get(k)
+        for k in ("XTS_CONNECT_HEADLESS", "X_USERNAME", "X_PASSWORD", "X_EMAIL", "X_LOGIN_METHOD")
+    }
+    original_should = scraper._should_prefer_google_login
+    original_save = scraper._save_login_session
+    called = {}
+
+    async def fake_save(*, headless, slow_mo=0, progress=None):
+        called["headless"] = headless
+
+    try:
+        os.environ["XTS_CONNECT_HEADLESS"] = "1"
+        os.environ["X_USERNAME"] = "user"
+        os.environ["X_PASSWORD"] = "pass"
+        os.environ.pop("X_EMAIL", None)
+        os.environ["X_LOGIN_METHOD"] = "auto"
+        scraper._should_prefer_google_login = lambda **kwargs: True
+        scraper._save_login_session = fake_save
+        asyncio.run(scraper._refresh_session())
+        assert called["headless"] is True
+    finally:
+        scraper._should_prefer_google_login = original_should
+        scraper._save_login_session = original_save
+        for k, v in original_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_headless_mode_does_not_prefer_google_login():
+    import scraper
+
+    original_flag = os.environ.get("XTS_CONNECT_HEADLESS")
+    original_user = os.environ.get("X_USERNAME")
+    original_pass = os.environ.get("X_PASSWORD")
+    try:
+        os.environ["XTS_CONNECT_HEADLESS"] = "1"
+        os.environ["X_USERNAME"] = "user"
+        os.environ["X_PASSWORD"] = "pass"
+        assert scraper._should_prefer_google_login(x_username="user", x_password="pass") is False
+    finally:
+        if original_flag is None:
+            os.environ.pop("XTS_CONNECT_HEADLESS", None)
+        else:
+            os.environ["XTS_CONNECT_HEADLESS"] = original_flag
+        if original_user is None:
+            os.environ.pop("X_USERNAME", None)
+        else:
+            os.environ["X_USERNAME"] = original_user
+        if original_pass is None:
+            os.environ.pop("X_PASSWORD", None)
+        else:
+            os.environ["X_PASSWORD"] = original_pass
 
 
 if __name__ == "__main__":
