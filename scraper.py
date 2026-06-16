@@ -738,11 +738,19 @@ async def _refresh_session(progress=None) -> None:
         "message": "Cached X session unavailable — attempting automatic re-login...",
     })
     x_user, x_pass, x_email = _get_x_credentials()
-    if _should_prefer_google_login(
+
+    # Determine effective login method: if Google is requested but credentials
+    # are incomplete (e.g. X_LOGIN_METHOD=google left over from old config but
+    # no GOOGLE_EMAIL / X_EMAIL set), fall back silently to native.
+    use_google = _should_prefer_google_login(
         x_username=x_user,
         x_password=x_pass,
         x_email=x_email,
-    ):
+    ) and _google_credentials_available(
+        x_username=x_user, x_password=x_pass, x_email=x_email
+    )
+
+    if use_google:
         _emit(progress, {
             "type": "progress",
             "message": "Using Google-based X sign-in in headless mode...",

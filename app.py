@@ -278,7 +278,9 @@ def healthz():
 
 @app.route("/session-status")
 def get_session_status():
-    return jsonify(session_status())
+    data = session_status()
+    data["headless"] = os.getenv("XTS_CONNECT_HEADLESS", "").lower() in {"1", "true", "yes"}
+    return jsonify(data)
 
 
 @app.route("/import-session", methods=["POST"])
@@ -331,9 +333,10 @@ def connect_x():
     Saves session.json on success.  Runs synchronously (blocks until done or error).
     """
     from scraper import _manual_login, _save_login_session  # local import avoids circular ref
+    is_headless_server = os.getenv("XTS_CONNECT_HEADLESS", "").lower() in {"1", "true", "yes"}
     try:
-        if os.getenv("XTS_CONNECT_HEADLESS", "").lower() in {"1", "true", "yes"}:
-            timeout = max(15, min(int(os.getenv("XTS_CONNECT_TIMEOUT", "60")), 180))
+        if is_headless_server:
+            timeout = max(15, min(int(os.getenv("XTS_CONNECT_TIMEOUT", "120")), 180))
 
             async def headless_connect():
                 await asyncio.wait_for(
@@ -348,6 +351,16 @@ def connect_x():
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
     except Exception as exc:
+        if is_headless_server:
+            return jsonify({
+                "ok": False,
+                "message": (
+                    "Browser-based login failed on this server — X blocks automated logins from cloud IPs. "
+                    "Use the \"Import Session File\" button instead: generate session.json locally by running "
+                    "python3 -c \"import asyncio; from scraper import _manual_login; asyncio.run(_manual_login())\" "
+                    "then upload the file."
+                ),
+            }), 400
         return jsonify({"ok": False, "message": str(exc)}), 500
 
 

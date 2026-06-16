@@ -188,8 +188,8 @@
       <span id="sessionBannerMsg">X session expired. Please reconnect to continue scanning.</span>
       <div class="flex gap-2 shrink-0">
         <button onclick="connectX()" class="bg-yellow-700 hover:bg-yellow-600 text-white text-xs font-semibold px-4 py-1.5 rounded transition-colors" id="sessionBannerBtn">Connect X Account</button>
-        <label class="cursor-pointer bg-sky-700 hover:bg-sky-600 text-white text-xs font-semibold px-4 py-1.5 rounded transition-colors" title="Upload session.json generated locally">
-          Import Session File
+        <label class="cursor-pointer bg-sky-700 hover:bg-sky-600 text-white text-xs font-semibold px-4 py-1.5 rounded transition-colors" title="Recommended for cloud servers: upload session.json generated locally">
+          ⬆ Import Session File
           <input type="file" accept=".json,application/json" class="hidden" onchange="importSession(this)">
         </label>
       </div>
@@ -588,11 +588,11 @@
     async function checkXSession() {
       try {
         const data = await fetchJson('/session-status');
-        updateXStatus(data.connected);
+        updateXStatus(data.connected, data.headless);
       } catch (e) { /* ignore */ }
     }
 
-    function updateXStatus(connected) {
+    function updateXStatus(connected, headless) {
       const badge = document.getElementById('xStatusBadge');
       const btn = document.getElementById('connectXBtn');
       const importBtn = document.getElementById('importSessionBtn');
@@ -606,8 +606,15 @@
       } else {
         badge.textContent = '○ X disconnected';
         badge.className = 'text-xs px-2 py-1 rounded border border-yellow-800 bg-yellow-950 text-yellow-400';
-        btn.classList.remove('hidden');
         importBtn.classList.remove('hidden');
+        if (headless) {
+          // On headless servers (Render), browser-based login is blocked by X.
+          // Import Session File is the only reliable path.
+          btn.classList.add('hidden');
+          importBtn.title = 'Upload session.json generated locally via _manual_login()';
+        } else {
+          btn.classList.remove('hidden');
+        }
       }
     }
 
