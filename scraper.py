@@ -292,8 +292,6 @@ def _should_prefer_google_login(
     x_password: str = "",
     x_email: str = "",
 ) -> bool:
-    if _headless_only_mode():
-        return False
     method = _get_login_method()
     if method == "google":
         return True
@@ -609,8 +607,6 @@ def _get_x_credentials() -> tuple[str, str, str]:
 async def _save_login_session(*, headless: bool, slow_mo: int = 0, progress=None) -> None:
     x_user, x_pass, x_email = _get_x_credentials()
     mode = "headless" if headless else "visible"
-    if headless and _get_login_method() == "google":
-        raise RuntimeError("Google sign-in is only supported in visible-browser mode.")
     _emit(progress, {
         "type": "progress",
         "message": f"Launching {mode} X login browser...",
@@ -650,55 +646,28 @@ async def _refresh_session(progress=None) -> None:
         "message": "Cached X session unavailable — attempting automatic re-login...",
     })
     x_user, x_pass, x_email = _get_x_credentials()
-    headless_only = _headless_only_mode()
     if _should_prefer_google_login(
         x_username=x_user,
         x_password=x_pass,
         x_email=x_email,
     ):
-        if headless_only:
-            _emit(progress, {
-                "type": "progress",
-                "message": "Using Google-based X sign-in in headless mode...",
-            })
-            try:
-                await asyncio.wait_for(
-                    _save_login_session(headless=True, slow_mo=60, progress=progress),
-                    timeout=HEADLESS_REFRESH_TIMEOUT,
-                )
-            except ValueError as exc:
-                raise SessionExpired(
-                    "No X session found and automatic Google-based login is unavailable."
-                ) from exc
-            except Exception as exc:
-                raise SessionExpired(
-                    "Automatic Google-based X login failed in headless mode. "
-                    f"Reason: {exc}."
-                ) from exc
-            _emit(progress, {
-                "type": "progress",
-                "message": "Automatic X login succeeded. Refreshing session...",
-            })
-            return
-
         _emit(progress, {
             "type": "progress",
-            "message": "Using Google-based X sign-in first. Opening a visible browser...",
+            "message": "Using Google-based X sign-in in headless mode...",
         })
         try:
             await asyncio.wait_for(
-                _save_login_session(headless=False, slow_mo=80, progress=progress),
-                timeout=VISIBLE_REFRESH_TIMEOUT,
+                _save_login_session(headless=True, slow_mo=60, progress=progress),
+                timeout=HEADLESS_REFRESH_TIMEOUT,
             )
         except ValueError as exc:
             raise SessionExpired(
-                "No X session found and Google-based automatic login is unavailable. "
-                "Set GOOGLE_EMAIL and GOOGLE_PASSWORD in .env, or click 'Connect X Account'."
+                "No X session found and automatic Google-based login is unavailable."
             ) from exc
         except Exception as exc:
             raise SessionExpired(
-                "Automatic Google-based X login failed. "
-                f"Reason: {exc}. Click 'Connect X Account' if you want to retry the visible flow manually."
+                "Automatic Google-based X login failed in headless mode. "
+                f"Reason: {exc}."
             ) from exc
         _emit(progress, {
             "type": "progress",

@@ -193,7 +193,7 @@ def test_refresh_session_stays_headless_when_render_flag_is_set():
                 os.environ[k] = v
 
 
-def test_headless_mode_does_not_prefer_google_login():
+def test_headless_mode_can_prefer_google_login():
     import scraper
 
     original_flag = os.environ.get("XTS_CONNECT_HEADLESS")
@@ -203,7 +203,7 @@ def test_headless_mode_does_not_prefer_google_login():
         os.environ["XTS_CONNECT_HEADLESS"] = "1"
         os.environ["X_USERNAME"] = "user"
         os.environ["X_PASSWORD"] = "pass"
-        assert scraper._should_prefer_google_login(x_username="user", x_password="pass") is False
+        assert scraper._should_prefer_google_login(x_username="user", x_password="pass") is True
     finally:
         if original_flag is None:
             os.environ.pop("XTS_CONNECT_HEADLESS", None)

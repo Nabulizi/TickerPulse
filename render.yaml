@@ -16,7 +16,7 @@ services:
       - key: XTS_CONNECT_HEADLESS
         value: "1"
       - key: X_LOGIN_METHOD
-        value: native
+        value: google
       - key: APP_USERNAME
         value: admin
       - key: APP_PASSWORD

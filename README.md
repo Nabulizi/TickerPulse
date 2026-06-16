@@ -124,11 +124,13 @@ The deployed service uses:
 XTS_SESSION_FILE=/app/data/session.json
 XTS_OUTPUT_DIR=/app/data/output
 XTS_CONNECT_HEADLESS=1
+X_LOGIN_METHOD=google
 ```
 
 With `XTS_CONNECT_HEADLESS=1`, the dashboard's reconnect button uses
 credential-based headless login instead of trying to open a visible browser in
-the Render container.
+the Render container. `X_LOGIN_METHOD=google` keeps the deployment on the
+Google sign-in path you rely on.
 
 Keep one Gunicorn worker for this app. The scraper uses one X session plus a
 single background scheduler, and multiple worker processes would each try to run
