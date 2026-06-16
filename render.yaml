@@ -15,8 +15,12 @@ services:
         value: /app/data/session.json
       - key: XTS_CONNECT_HEADLESS
         value: "1"
+      - key: XTS_CONNECT_TIMEOUT
+        value: "120"
+      # native = X username/password form fill (works headlessly, auto-renews on expiry)
+      # google = Google OAuth popup (requires a display — use only for local dev)
       - key: X_LOGIN_METHOD
-        value: google
+        value: native
       - key: APP_USERNAME
         value: admin
       - key: APP_PASSWORD
@@ -26,4 +30,11 @@ services:
       - key: X_PASSWORD
         sync: false
       - key: X_EMAIL
+        sync: false
+      # Base64-encoded session.json for headless deployments.
+      # Generate locally:
+      #   python3 -c "import asyncio; from scraper import _manual_login; asyncio.run(_manual_login())"
+      #   base64 -i session.json | tr -d '\n'
+      # Paste the output here. Redeploy to apply.
+      - key: XTS_SESSION_B64
         sync: false

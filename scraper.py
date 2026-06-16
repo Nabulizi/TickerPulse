@@ -1,6 +1,9 @@
 import asyncio
+import base64
+import json
 import os
 import re
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
@@ -27,6 +30,52 @@ def _secure_session_file() -> None:
         SESSION_FILE.chmod(0o600)
     except (OSError, NotImplementedError):
         pass
+
+
+def _bootstrap_session_from_env() -> bool:
+    """
+    Write session.json from the XTS_SESSION_B64 env var when the file is absent.
+
+    Usage on Render (or any headless server):
+      1. Log in locally: python3 -c "import asyncio; from scraper import _manual_login; asyncio.run(_manual_login())"
+      2. Encode: base64 -i session.json | tr -d '\\n'
+      3. Paste the output as the XTS_SESSION_B64 environment variable on Render.
+      4. Redeploy — the session file is written on first startup.
+
+    Returns True if the session file was written, False otherwise.
+    """
+    raw = os.getenv("XTS_SESSION_B64", "").strip()
+    if not raw or SESSION_FILE.exists():
+        return False
+    try:
+        data = base64.b64decode(raw)
+        json.loads(data)  # validate it is well-formed JSON before writing
+        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=SESSION_FILE.parent)
+        try:
+            os.write(fd, data)
+            os.close(fd)
+            os.replace(tmp, str(SESSION_FILE))
+        except Exception:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            try:
+                os.unlink(tmp)
+            except Exception:
+                pass
+            raise
+        _secure_session_file()
+        print(f"[✓] Session bootstrapped from XTS_SESSION_B64 → {SESSION_FILE}")
+        return True
+    except Exception as exc:
+        print(f"[!] Failed to bootstrap session from XTS_SESSION_B64: {exc}")
+        return False
+
+
+# Bootstrap on module load so the session is ready before any request is handled.
+_bootstrap_session_from_env()
 
 
 def _emit(progress, msg: dict) -> None:
@@ -80,7 +129,7 @@ def validate_username(username: str) -> str:
 # scroll logic and just borrow the hardening ideas.)
 
 _STEALTH_ARGS = ["--disable-blink-features=AutomationControlled"]
-HEADLESS_REFRESH_TIMEOUT = 35
+HEADLESS_REFRESH_TIMEOUT = 120
 VISIBLE_REFRESH_TIMEOUT = 180
 
 _STEALTH_INIT_JS = """
@@ -642,6 +691,15 @@ async def _refresh_session(progress=None) -> None:
     Best-effort silent login path for expired/missing sessions.
     Falls back to an automatic visible-browser login if headless auth is blocked.
     """
+    # If XTS_SESSION_B64 is set, try restoring the session file before touching
+    # the browser at all (this is the primary path on headless servers like Render).
+    if _bootstrap_session_from_env():
+        _emit(progress, {
+            "type": "progress",
+            "message": "Session restored from XTS_SESSION_B64 environment variable.",
+        })
+        return
+
     _emit(progress, {
         "type": "progress",
         "message": "Cached X session unavailable — attempting automatic re-login...",
@@ -666,9 +724,12 @@ async def _refresh_session(progress=None) -> None:
                 "No X session found and automatic Google-based login is unavailable."
             ) from exc
         except Exception as exc:
+            reason = str(exc) or type(exc).__name__
             raise SessionExpired(
                 "Automatic Google-based X login failed in headless mode. "
-                f"Reason: {exc}."
+                f"Reason: {reason}. "
+                "On headless servers, set the XTS_SESSION_B64 environment variable "
+                "to a base64-encoded session.json (generated locally via _manual_login)."
             ) from exc
         _emit(progress, {
             "type": "progress",
