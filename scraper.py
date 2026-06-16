@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import re
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -165,7 +166,9 @@ try {
 
 def _stealth_user_agent(browser) -> str:
     """Genuine-looking desktop UA derived from the live engine version so the UA
-    header and Sec-CH-UA client hints agree. Falls back to a recent version."""
+    header and Sec-CH-UA client hints agree. Falls back to a recent version.
+    Uses a Linux UA on Linux hosts (Render/Docker) so the OS in the UA string
+    matches the actual platform — a Mac UA on a Linux host is a fingerprint tell."""
     version = ""
     try:
         version = (browser.version or "").strip()
@@ -173,8 +176,12 @@ def _stealth_user_agent(browser) -> str:
         pass
     if not version:
         version = "148.0.0.0"
+    if sys.platform.startswith("linux"):
+        platform_str = "X11; Linux x86_64"
+    else:
+        platform_str = "Macintosh; Intel Mac OS X 10_15_7"
     return (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        f"Mozilla/5.0 ({platform_str}) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         f"Chrome/{version} Safari/537.36"
     )
@@ -214,7 +221,9 @@ def _stealth_context_kwargs(browser) -> dict:
 
 async def _apply_stealth(context) -> None:
     """Install the fingerprint-patching init script on every page in the context."""
-    await context.add_init_script(_STEALTH_INIT_JS)
+    nav_platform = "Linux x86_64" if sys.platform.startswith("linux") else "MacIntel"
+    platform_js = f'Object.defineProperty(navigator, "platform", {{get: () => "{nav_platform}"}});\n'
+    await context.add_init_script(platform_js + _STEALTH_INIT_JS)
 
 
 async def _wait_for_visible(page, selectors: list[str], timeout: int = 20000):
@@ -232,17 +241,27 @@ async def _wait_for_first_locator(
     locator_builders: list[Callable],
     timeout: int = 20000,
 ):
-    last_exc = None
-    per_try_timeout = max(1000, timeout // max(len(locator_builders), 1))
-    for build in locator_builders:
-        try:
-            locator = build(page).first
-            await locator.wait_for(state="visible", timeout=per_try_timeout)
-            return locator
-        except PWTimeout:
-            last_exc = PWTimeout("No matching locator became visible")
-            continue
-    raise last_exc or PWTimeout("No matching locator became visible")
+    """
+    Return the first locator that becomes visible within `timeout` ms.
+
+    Polls all locators in a tight loop (every ~500 ms per candidate) until the
+    global deadline, rather than splitting the budget equally.  This means any
+    locator can match at any point during the full window — important when a
+    page loads slowly (e.g. on a cold container).
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout / 1000
+    last_exc: Exception = PWTimeout("No matching locator became visible")
+    while loop.time() < deadline:
+        for build in locator_builders:
+            try:
+                locator = build(page).first
+                await locator.wait_for(state="visible", timeout=500)
+                return locator
+            except PWTimeout:
+                continue
+        await asyncio.sleep(0.1)
+    raise last_exc
 
 
 async def _click_first_available(page, locator_builders: list[Callable], timeout: int = 8000) -> bool:
@@ -505,6 +524,12 @@ async def _do_login(page, username: str, password: str, email: str = "", progres
         "message": "Opening the X login page...",
     })
     await page.goto("https://x.com/i/flow/login", wait_until="domcontentloaded")
+    # Wait for React to finish mounting the login form. networkidle is ideal but
+    # can hang on slow networks; fall back silently after 8 s.
+    try:
+        await page.wait_for_load_state("networkidle", timeout=8000)
+    except PWTimeout:
+        pass
     await asyncio.sleep(2)
 
     if _should_prefer_google_login(
