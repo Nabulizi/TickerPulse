@@ -17,10 +17,10 @@ python3 -c "import asyncio; from scraper import _manual_login; asyncio.run(_manu
 # Run the app
 ./start.sh
 # or: source venv/bin/activate && python3 app.py
-# Opens at http://localhost:5000
+# Opens at http://localhost:8080
 ```
 
-There are no automated tests or linter configs in this project.
+Run the offline test suite with: `source venv/bin/activate && python3 -m pytest -q test_*.py`
 
 ## Architecture
 
