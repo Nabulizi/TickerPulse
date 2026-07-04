@@ -216,17 +216,25 @@ def _platform_for_ua(ua: str) -> str:
     return "Linux x86_64"
 
 
-async def _launch_stealth_browser(pw, headless: bool, slow_mo: int = 0):
+async def _launch_stealth_browser(pw, headless: bool, slow_mo: int = 0,
+                                  block_images: bool = False):
     """Launch Chromium with the automation fingerprints stripped. Prefers the
     real installed Chrome channel (most genuine fingerprint) and falls back to
-    Playwright's bundled Chromium."""
+    Playwright's bundled Chromium.
+
+    block_images renders pages without downloading/rasterizing images or remote
+    fonts — a browser-level flag with zero per-request overhead (unlike
+    context.route interception, which funnels every request through Python and
+    crawls on fractional-CPU containers). Scraping only reads text/DOM, so
+    scans enable it; login flows keep images for the human at the screen."""
     last_err = None
+    extra = ["--blink-settings=imagesEnabled=false", "--disable-remote-fonts"] if block_images else []
     for channel in ("chrome", None):
         try:
             kwargs = {
                 "headless": headless,
                 "slow_mo": slow_mo,
-                "args": _STEALTH_ARGS,
+                "args": _STEALTH_ARGS + extra,
                 "ignore_default_args": ["--enable-automation"],
             }
             if channel:
@@ -1248,7 +1256,7 @@ async def scrape_accounts(
             await _refresh_session(progress=progress)
 
         _emit(progress, {"type": "progress", "message": "Launching browser…"})
-        browser = await _launch_stealth_browser(pw, headless=True, slow_mo=60)
+        browser = await _launch_stealth_browser(pw, headless=True, slow_mo=60, block_images=True)
         # Use the UA that was saved when the session was created so
         # Cloudflare's cf_clearance cookie stays valid across platforms.
         saved_ua = _read_session_ua()
@@ -1259,17 +1267,6 @@ async def scrape_accounts(
         context = await browser.new_context(**ctx_kwargs)
         nav_platform = _platform_for_ua(saved_ua) if saved_ua else None
         await _apply_stealth(context, nav_platform=nav_platform)
-        # The scraper only reads text and DOM structure — skip downloading and
-        # rasterizing X's images/video/fonts. On memory- and CPU-constrained
-        # containers (Render free/starter: 512 MB, fractional CPU) this is the
-        # difference between the renderer surviving a scan and being OOM-killed.
-        async def _block_heavy_resources(route):
-            if route.request.resource_type in {"image", "media", "font"}:
-                await route.abort()
-            else:
-                await route.continue_()
-
-        await context.route("**/*", _block_heavy_resources)
         page = await context.new_page()
         # Secondary page used exclusively to fetch full text of truncated posts.
         # Kept open for the whole session so we avoid repeated browser-context overhead.

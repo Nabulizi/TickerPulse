@@ -4,6 +4,7 @@ import os
 import queue
 import re
 import tempfile
+import sys
 import threading
 import time
 import uuid
@@ -252,6 +253,22 @@ def index():
 @app.route("/healthz")
 def healthz():
     return jsonify({"ok": True})
+
+
+@app.route("/debug/threads")
+def debug_threads():
+    """
+    TEMPORARY diagnostic: dump every thread's current stack so a hung scan
+    shows exactly which line it is blocked on. Remove with /debug/x-probe.
+    """
+    import traceback
+    frames = sys._current_frames()
+    out = {}
+    for t in threading.enumerate():
+        frame = frames.get(t.ident)
+        stack = "".join(traceback.format_stack(frame)) if frame else "<no frame>"
+        out[f"{t.name} (daemon={t.daemon})"] = stack.splitlines()[-12:]
+    return jsonify(out)
 
 
 @app.route("/debug/x-probe")
