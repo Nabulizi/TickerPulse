@@ -213,5 +213,20 @@ def test_scan_session_save_preserves_user_agent_pin():
         scraper.SESSION_FILE = original_session_file
 
 
+def test_port_in_use_detection():
+    """_port_in_use reports a bound port as busy and a free port as free."""
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    s.listen(1)
+    busy_port = s.getsockname()[1]
+    try:
+        assert app._port_in_use(busy_port) is True
+    finally:
+        s.close()
+    assert app._port_in_use(busy_port) is False
+
+
 if __name__ == "__main__":
     _run_all()

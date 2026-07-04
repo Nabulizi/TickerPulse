@@ -3,6 +3,8 @@ import json
 import os
 import queue
 import re
+import socket
+import sys
 import tempfile
 import threading
 import time
@@ -716,8 +718,18 @@ def _write_json_atomic(path: Path, data) -> None:
         raise
 
 
+def _port_in_use(port: int) -> bool:
+    """True if something is already listening on 127.0.0.1:port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
+    if _port_in_use(port):
+        print(f"[✗] Port {port} is already in use — another instance is likely running.")
+        print(f"    Identify it with:  lsof -iTCP:{port} -sTCP:LISTEN")
+        sys.exit(1)
     start_background_services()
     print(f"[✓] Ready — open http://localhost:{port}")
     app.run(debug=False, port=port)
