@@ -5,6 +5,7 @@ Run:
     python3 test_safety_regressions.py
 """
 import asyncio
+import json
 import os
 import queue
 import tempfile
@@ -180,6 +181,44 @@ def test_headless_mode_can_prefer_google_login():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+class _FakeContext:
+    """Stand-in for a Playwright BrowserContext — storage_state() only ever
+    writes {cookies, origins}, exactly like the real API."""
+
+    async def storage_state(self, path):
+        Path(path).write_text(json.dumps({"cookies": [{"name": "ct0", "value": "x"}], "origins": []}))
+
+
+def test_scan_session_save_preserves_user_agent_pin():
+    """
+    Regression test for the Render hang: scrape_accounts() used to persist
+    the session with a bare `context.storage_state()` call, which discards
+    the `_user_agent` field. Cloudflare's cf_clearance cookie is bound to
+    the UA that solved the challenge (see commit 6fea45d), so losing that
+    field after the first scan on Render causes every subsequent scan to
+    present a mismatched UA and hang behind a Cloudflare interstitial.
+    """
+    import scraper
+
+    original_session_file = scraper.SESSION_FILE
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            scraper.SESSION_FILE = Path(tmp) / "session.json"
+            # Seed an existing session that already has a pinned UA, as it
+            # would after a real login or an XTS_SESSION_B64 bootstrap.
+            scraper.SESSION_FILE.write_text(json.dumps({
+                "cookies": [], "origins": [], "_user_agent": "Mozilla/5.0 (pinned)"
+            }))
+
+            asyncio.run(scraper._persist_session_state(_FakeContext(), "Mozilla/5.0 (pinned)"))
+
+            saved = json.loads(scraper.SESSION_FILE.read_text())
+            assert saved.get("_user_agent") == "Mozilla/5.0 (pinned)", \
+                "Session save must preserve the pinned UA so cf_clearance stays valid"
+    finally:
+        scraper.SESSION_FILE = original_session_file
 
 
 if __name__ == "__main__":

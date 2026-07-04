@@ -256,14 +256,31 @@ async def _apply_stealth(context, nav_platform: Optional[str] = None) -> None:
     await context.add_init_script(platform_js + _STEALTH_INIT_JS)
 
 
-async def _wait_for_visible(page, selectors: list[str], timeout: int = 20000):
-    last_exc = None
-    for selector in selectors:
+async def _persist_session_state(context, user_agent: Optional[str]) -> None:
+    """
+    Save the browser context's cookies to SESSION_FILE, re-embedding the
+    pinned `_user_agent` field afterward.
+
+    Playwright's storage_state() only ever writes {cookies, origins} — calling
+    it directly overwrites SESSION_FILE and silently drops any `_user_agent`
+    previously embedded in it. Cloudflare's cf_clearance cookie is bound to
+    the UA that solved the challenge (see commit 6fea45d), so losing that
+    pin after the first scan causes every later session restore to present a
+    mismatched UA and hang behind a Cloudflare interstitial.
+    """
+    SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    await context.storage_state(path=str(SESSION_FILE))
+    if user_agent:
         try:
-            return await page.wait_for_selector(selector, state="visible", timeout=timeout)
-        except PWTimeout as exc:
-            last_exc = exc
-    raise last_exc or PWTimeout("No matching selector became visible")
+            data = json.loads(SESSION_FILE.read_text())
+            data["_user_agent"] = user_agent
+            fd, tmp = tempfile.mkstemp(dir=SESSION_FILE.parent)
+            os.write(fd, json.dumps(data).encode())
+            os.close(fd)
+            os.replace(tmp, str(SESSION_FILE))
+        except Exception:
+            pass  # non-fatal — session still works, just without UA pinning
+    _secure_session_file()
 
 
 async def _wait_for_first_locator(
@@ -375,17 +392,6 @@ def _get_google_credentials(
             "(or X_EMAIL + X_PASSWORD) in .env."
         )
     return google_email, google_password
-
-
-def _use_google_login() -> bool:
-    return _get_login_method() == "google"
-
-
-def _headless_only_mode() -> bool:
-    flag = os.getenv("XTS_CONNECT_HEADLESS", "").strip().lower()
-    if flag in {"1", "true", "yes"}:
-        return True
-    return not (os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
 
 
 def _should_prefer_google_login(
@@ -707,11 +713,6 @@ async def _do_login(page, username: str, password: str, email: str = "", progres
     print("[✓] Login successful")
 
 
-async def _login(page, username: str, password: str, progress=None) -> None:
-    x_email = os.getenv("X_EMAIL", "").strip()
-    await _do_login(page, username, password, email=x_email, progress=progress)
-
-
 def _get_x_credentials() -> tuple[str, str, str]:
     x_user = os.getenv("X_USERNAME", "").strip()
     x_pass = os.getenv("X_PASSWORD", "").strip()
@@ -746,20 +747,7 @@ async def _save_login_session(*, headless: bool, slow_mo: int = 0, progress=None
             except PWTimeout as exc:
                 raise SessionExpired("X login did not complete successfully.") from exc
 
-            SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-            await context.storage_state(path=str(SESSION_FILE))
-            # Embed the UA inside session.json so Render reuses the same one
-            # (Cloudflare's cf_clearance cookie is bound to the UA).
-            try:
-                data = json.loads(SESSION_FILE.read_text())
-                data["_user_agent"] = _stealth_user_agent(browser)
-                fd, tmp = tempfile.mkstemp(dir=SESSION_FILE.parent)
-                os.write(fd, json.dumps(data).encode())
-                os.close(fd)
-                os.replace(tmp, str(SESSION_FILE))
-            except Exception:
-                pass  # non-fatal — session still works, just without UA pinning
-            _secure_session_file()
+            await _persist_session_state(context, _stealth_user_agent(browser))
         finally:
             await browser.close()
 
@@ -1350,9 +1338,11 @@ async def scrape_accounts(
 
             await asyncio.sleep(1.5)
 
-        # Persist any refreshed cookies so the session stays alive between runs
-        await context.storage_state(path=str(SESSION_FILE))
-        _secure_session_file()
+        # Persist any refreshed cookies so the session stays alive between runs,
+        # re-pinning whichever UA this context actually used (saved_ua if we had
+        # one, otherwise the freshly generated one) so cf_clearance stays valid
+        # on the next run too.
+        await _persist_session_state(context, ctx_kwargs["user_agent"])
         await browser.close()
 
     return results
