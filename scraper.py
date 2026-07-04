@@ -275,14 +275,17 @@ async def _wait_for_article_change(page, prev_count: int, cap_s: float = 1.3) ->
     loop = asyncio.get_running_loop()
     deadline = loop.time() + cap_s
     count = prev_count
-    while loop.time() < deadline:
+    while True:
         try:
             count = await page.locator(_ARTICLE_SELECTOR).count()
         except Exception:
             break  # navigation/context churn — let the caller's logic decide
         if count != prev_count:
             break
-        await asyncio.sleep(0.15)
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(0.15, remaining))
     return count
 
 
@@ -295,7 +298,7 @@ async def _wait_for_render_settle(page, cap_s: float = 1.5) -> None:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + cap_s
     prev = -1
-    while loop.time() < deadline:
+    while True:
         try:
             current = await page.locator(_ARTICLE_SELECTOR).count()
         except Exception:
@@ -303,7 +306,10 @@ async def _wait_for_render_settle(page, cap_s: float = 1.5) -> None:
         if current > 0 and current == prev:
             return
         prev = current
-        await asyncio.sleep(0.15)
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(0.15, remaining))
 
 
 async def _click_first_available(page, locator_builders: list[Callable], timeout: int = 8000) -> bool:

@@ -5,6 +5,7 @@ synthetic HTML that mirrors X's article DOM — no browser, no network required.
 
 Run:  source venv/bin/activate && python3 test_scraper_parse.py
 """
+import asyncio
 import scraper
 
 
@@ -119,23 +120,6 @@ def test_parse_article_malformed_returns_empty():
         scraper._parse_article("\x00not html<<<").get("has_text_node") in (None, False)
 
 
-def _run_all():
-    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    passed = 0
-    for fn in fns:
-        fn()
-        passed += 1
-        print(f"  ✓ {fn.__name__}")
-    print(f"\n{passed}/{len(fns)} passed")
-
-
-if __name__ == "__main__":
-    _run_all()
-
-
-import asyncio
-
-
 class _FakeLocator:
     def __init__(self, counts):
         self._counts = counts  # successive values to return
@@ -172,3 +156,48 @@ def test_wait_for_render_settle_returns_on_stability():
     page = _FakePage([1, 3, 3])
     asyncio.run(scraper._wait_for_render_settle(page, cap_s=2.0))
     assert page._locator.calls >= 3  # needed two consecutive equal nonzero reads
+
+
+def test_wait_for_article_change_survives_locator_errors():
+    class _RaisingLocator:
+        async def count(self):
+            raise RuntimeError("navigation destroyed context")
+
+    class _RaisingPage:
+        def locator(self, selector):
+            return _RaisingLocator()
+
+    result = asyncio.run(scraper._wait_for_article_change(_RaisingPage(), prev_count=4, cap_s=5.0))
+    assert result == 4  # returns prev_count immediately, no hang
+
+
+def test_wait_for_article_change_respects_cap():
+    import time as _time
+
+    page = _FakePage([5])
+    start = _time.monotonic()
+    asyncio.run(scraper._wait_for_article_change(page, prev_count=5, cap_s=0.3))
+    assert _time.monotonic() - start < 0.6  # returns at the cap, no overshoot
+
+
+def test_wait_for_render_settle_caps_out_on_empty_timeline():
+    import time as _time
+
+    page = _FakePage([0])
+    start = _time.monotonic()
+    asyncio.run(scraper._wait_for_render_settle(page, cap_s=0.4))
+    assert _time.monotonic() - start < 1.0  # capped out, did not hang
+
+
+def _run_all():
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    passed = 0
+    for fn in fns:
+        fn()
+        passed += 1
+        print(f"  ✓ {fn.__name__}")
+    print(f"\n{passed}/{len(fns)} passed")
+
+
+if __name__ == "__main__":
+    _run_all()
