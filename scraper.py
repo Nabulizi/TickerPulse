@@ -1259,6 +1259,17 @@ async def scrape_accounts(
         context = await browser.new_context(**ctx_kwargs)
         nav_platform = _platform_for_ua(saved_ua) if saved_ua else None
         await _apply_stealth(context, nav_platform=nav_platform)
+        # The scraper only reads text and DOM structure — skip downloading and
+        # rasterizing X's images/video/fonts. On memory- and CPU-constrained
+        # containers (Render free/starter: 512 MB, fractional CPU) this is the
+        # difference between the renderer surviving a scan and being OOM-killed.
+        async def _block_heavy_resources(route):
+            if route.request.resource_type in {"image", "media", "font"}:
+                await route.abort()
+            else:
+                await route.continue_()
+
+        await context.route("**/*", _block_heavy_resources)
         page = await context.new_page()
         # Secondary page used exclusively to fetch full text of truncated posts.
         # Kept open for the whole session so we avoid repeated browser-context overhead.

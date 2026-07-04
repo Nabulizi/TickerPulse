@@ -64,7 +64,10 @@ def start_background_services() -> None:
 def _prune_scans_locked() -> None:
     now = time.time()
     for sid in list(_scans.keys()):
-        if now - _scans[sid]["ts"] > SCAN_TTL:
+        # Only evict FINISHED scans on TTL — "ts" is set at registration, so a
+        # still-running scan (slow cloud instances routinely exceed 5 minutes)
+        # must not be evicted or its stream returns "Scan not found" mid-run.
+        if _scans[sid].get("final") is not None and now - _scans[sid]["ts"] > SCAN_TTL:
             del _scans[sid]
     while len(_scans) > MAX_SCANS:
         oldest = next(iter(_scans))
