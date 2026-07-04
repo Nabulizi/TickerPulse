@@ -112,6 +112,15 @@ and restarts it if it crashes. The dashboard is then always available at
 **http://localhost:8080** — bookmark it. Logs: `data/launchd.log` and
 `data/launchd.err.log`. To uninstall: `./install_launchd.sh remove`.
 
+**If the dashboard isn't reachable after install** (macOS Full Disk Access):
+when the project lives under `~/Documents`, `~/Desktop`, or `~/Downloads`,
+macOS blocks the launchd-started process from reading the project files, so
+the app never binds the port. Fix it once: open **System Settings → Privacy &
+Security → Full Disk Access**, add your Python interpreter (the `venv/bin/python3`
+this project uses — `readlink venv/bin/python3` shows the real path), then run
+`launchctl kickstart -k gui/$(id -u)/com.x-ticker-scraper`. Check
+`data/launchd.err.log` if issues persist.
+
 ## CLI
 
 Run a scan from the terminal without opening the dashboard:
