@@ -251,6 +251,90 @@ def healthz():
     return jsonify({"ok": True})
 
 
+@app.route("/debug/x-probe")
+def debug_x_probe():
+    """
+    TEMPORARY diagnostic: test this container's connectivity to x.com at both
+    the HTTP level (requests) and the browser level (Playwright with the real
+    session), and report what X actually serves. Added to debug the Render
+    session-check hang; remove once the root cause is confirmed.
+    """
+    out = {}
+
+    # 1) Plain HTTPS fetch — does x.com respond to this host's IP at all?
+    try:
+        import requests as _rq
+        t0 = time.time()
+        r = _rq.get(
+            "https://x.com/home", timeout=30, allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                                   "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"},
+        )
+        out["http"] = {"status": r.status_code, "bytes": len(r.content),
+                       "final_url": r.url, "seconds": round(time.time() - t0, 1)}
+    except Exception as exc:
+        out["http"] = {"error": str(exc)[:300]}
+
+    # 2) Browser probe — same launch path as a real scan, minus the scraping.
+    if not SCRAPE_LOCK.acquire(blocking=False):
+        out["browser"] = {"error": "A scan is running; try again when it finishes."}
+        return jsonify(out)
+
+    async def probe():
+        from playwright.async_api import async_playwright
+        from scraper import (SESSION_FILE, _apply_stealth, _launch_stealth_browser,
+                             _platform_for_ua, _read_session_ua,
+                             _stealth_context_kwargs, _wait_for_signed_in)
+        res = {}
+        async with async_playwright() as pw:
+            browser = await _launch_stealth_browser(pw, headless=True)
+            res["engine"] = browser.version
+            kw = _stealth_context_kwargs(browser)
+            ua = _read_session_ua()
+            if ua:
+                kw["user_agent"] = ua
+            res["session_file_exists"] = SESSION_FILE.exists()
+            res["session_has_ua_pin"] = bool(ua)
+            if SESSION_FILE.exists():
+                kw["storage_state"] = str(SESSION_FILE)
+            ctx = await browser.new_context(**kw)
+            await _apply_stealth(ctx, nav_platform=_platform_for_ua(ua) if ua else None)
+            page = await ctx.new_page()
+            t0 = time.time()
+            try:
+                resp = await page.goto("https://x.com/home",
+                                       wait_until="domcontentloaded", timeout=30000)
+                res["goto_status"] = resp.status if resp else None
+            except Exception as exc:
+                res["goto_error"] = str(exc)[:200]
+            res["goto_seconds"] = round(time.time() - t0, 1)
+            try:
+                await _wait_for_signed_in(page, timeout=15000)
+                res["signed_in"] = True
+            except Exception:
+                res["signed_in"] = False
+            res["url"] = page.url
+            try:
+                res["title"] = await page.title()
+            except Exception:
+                pass
+            try:
+                body = await page.locator("body").inner_text(timeout=3000)
+                res["body_snippet"] = " ".join(body.split())[:300]
+            except Exception as exc:
+                res["body_error"] = str(exc)[:150]
+            await browser.close()
+        return res
+
+    try:
+        out["browser"] = asyncio.run(probe())
+    except Exception as exc:
+        out["browser"] = {"error": str(exc)[:300]}
+    finally:
+        SCRAPE_LOCK.release()
+    return jsonify(out)
+
+
 @app.route("/session-status")
 def get_session_status():
     data = session_status()
