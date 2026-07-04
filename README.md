@@ -109,14 +109,10 @@ watchlists, scan output, and X session survive restarts.
 In Render, create the service from the Blueprint and set the prompted secrets:
 
 ```env
-APP_PASSWORD=a_long_random_password_for_the_dashboard
 X_USERNAME=your_x_username_or_email
 X_PASSWORD=your_x_password
 X_EMAIL=optional_email_for_extra_X_verification
 ```
-
-`APP_USERNAME` defaults to `admin`. Set `APP_PASSWORD` on Render so the public
-dashboard URL requires Basic Auth; leave it unset for open local development.
 
 The deployed service uses:
 

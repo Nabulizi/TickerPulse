@@ -12,8 +12,6 @@ What it does:
 
 Required env vars (in .env or your shell):
     RENDER_APP_URL  — e.g. https://x-ticker-scraper.onrender.com
-    APP_PASSWORD    — the APP_PASSWORD you set in Render
-    APP_USERNAME    — optional, defaults to "admin"
 """
 
 import asyncio
@@ -26,21 +24,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 RENDER_APP_URL = os.getenv("RENDER_APP_URL", "").rstrip("/")
-APP_USERNAME = os.getenv("APP_USERNAME", "admin").strip() or "admin"
-APP_PASSWORD = os.getenv("APP_PASSWORD", "").strip()
 
 
 def _check_config() -> None:
-    missing = []
     if not RENDER_APP_URL:
-        missing.append("RENDER_APP_URL (e.g. https://x-ticker-scraper.onrender.com)")
-    if not APP_PASSWORD:
-        missing.append("APP_PASSWORD")
-    if missing:
-        print("ERROR: missing required env vars:")
-        for m in missing:
-            print(f"  {m}")
-        print("\nAdd them to your .env file and re-run.")
+        print("ERROR: missing required env var RENDER_APP_URL (e.g. https://x-ticker-scraper.onrender.com)")
+        print("Add it to your .env file and re-run.")
         sys.exit(1)
 
 
@@ -68,7 +57,6 @@ def _upload_session(session_file: Path) -> None:
         resp = requests.post(
             url,
             files={"session": ("session.json", f, "application/json")},
-            auth=(APP_USERNAME, APP_PASSWORD),
             timeout=30,
         )
 

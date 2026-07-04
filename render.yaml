@@ -21,10 +21,6 @@ services:
       # google = Google OAuth popup (requires a display — use only for local dev)
       - key: X_LOGIN_METHOD
         value: native
-      - key: APP_USERNAME
-        value: admin
-      - key: APP_PASSWORD
-        sync: false
       - key: X_USERNAME
         sync: false
       - key: X_PASSWORD
