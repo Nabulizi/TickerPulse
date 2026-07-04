@@ -350,7 +350,9 @@ async def _click_button_by_text(page, names: list[str], timeout: int = 8000) -> 
 async def _wait_for_signed_in(page, timeout: int = 120_000) -> None:
     """
     Treat a signed-in shell as success even if X uses a different post-login URL.
-    Checks multiple selectors that indicate an authenticated session.
+    Polls multiple signed-in indicators for the FULL window (rather than giving
+    each selector a slice of it) — on low-CPU cloud containers X's app can take
+    40s+ to hydrate, and any selector must be able to match at any point.
     """
     selectors = [
         '[data-testid="SideNav_AccountSwitcher_Button"]',
@@ -360,15 +362,14 @@ async def _wait_for_signed_in(page, timeout: int = 120_000) -> None:
         '[data-testid="primaryColumn"]',          # main timeline column
         'a[href="/compose/post"]',                # compose link
     ]
-    last_exc = None
-    per_try_timeout = max(2000, timeout // max(len(selectors), 1))
-    for selector in selectors:
-        try:
-            await page.wait_for_selector(selector, state="visible", timeout=per_try_timeout)
-            return
-        except PWTimeout as exc:
-            last_exc = exc
-    raise last_exc or PWTimeout("Signed-in X shell did not appear")
+    try:
+        await _wait_for_first_locator(
+            page,
+            [(lambda p, s=sel: p.locator(s)) for sel in selectors],
+            timeout=timeout,
+        )
+    except PWTimeout:
+        raise PWTimeout("Signed-in X shell did not appear")
 
 
 def _get_login_method() -> str:
@@ -876,7 +877,7 @@ async def _get_full_text(page2, url: str) -> Optional[str]:
     try:
         await page2.goto(url, wait_until="domcontentloaded")
         await page2.wait_for_selector(
-            'article[data-testid="tweet"] [data-testid="tweetText"]', timeout=10000
+            'article[data-testid="tweet"] [data-testid="tweetText"]', timeout=30_000
         )
         # The first article on the detail page is always the main tweet
         articles = await page2.query_selector_all('article[data-testid="tweet"]')
@@ -1054,9 +1055,11 @@ async def _fetch_posts(
     """
     await page.goto(f"https://x.com/{username}", wait_until="domcontentloaded")
 
+    # 60s ceiling (not a sleep): profile pages re-hydrate X's whole app on
+    # every goto, which takes ~40s on 0.15-CPU cloud containers.
     for attempt in range(2):
         try:
-            await page.wait_for_selector('article[data-testid="tweet"]', timeout=15000)
+            await page.wait_for_selector('article[data-testid="tweet"]', timeout=60_000)
             break
         except PWTimeout:
             body = await page.inner_text("body")
@@ -1263,20 +1266,22 @@ async def scrape_accounts(
 
         _emit(progress, {"type": "progress", "message": "Checking X session…"})
         try:
-            await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=20000)
+            await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
         except PWTimeout:
             _emit(progress, {"type": "progress", "message": "X is slow to respond, retrying…"})
             pass  # continue — _wait_for_signed_in will decide
 
-        # Wait for the signed-in shell.  On cloud servers (Render) X can be
-        # slow to hydrate or may serve an interstitial, so retry once with
-        # a fresh navigation before giving up.  We use goto (not reload)
-        # because a failed Cloudflare challenge may leave a pending JS
-        # redirect that blocks reload indefinitely.
+        # Wait for the signed-in shell.  These are ceilings, not sleeps — the
+        # wait returns the moment the shell appears, so large values cost
+        # nothing on fast machines.  On small cloud containers (Render free =
+        # 0.15 CPU) X's app measurably takes ~40s to hydrate, so anything
+        # under a minute here misreads a perfectly valid session as expired.
+        # Retry once with a fresh navigation before giving up; goto (not
+        # reload) because a pending JS redirect can block reload indefinitely.
         logged_in = None
         for attempt in range(2):
             try:
-                await _wait_for_signed_in(page, timeout=15000)
+                await _wait_for_signed_in(page, timeout=90_000)
                 logged_in = True
                 break
             except PWTimeout:
@@ -1285,7 +1290,7 @@ async def scrape_accounts(
                     _emit(progress, {"type": "progress", "message": "Session check timed out, retrying…"})
                     print("[…] Session check timed out, retrying with fresh navigation…")
                     try:
-                        await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=20000)
+                        await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
                     except PWTimeout:
                         pass  # let the next _wait_for_signed_in attempt decide
 
