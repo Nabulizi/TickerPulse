@@ -99,48 +99,18 @@ python3 app.py
 
 Then open **http://localhost:8080** in your browser.
 
-## Deploying to Render
+### Auto-start on login (macOS) — recommended
 
-This repo includes a `render.yaml` Blueprint and Dockerfile for Render. The
-Docker image uses the Playwright Python runtime, runs the app with Gunicorn, and
-mounts a 1 GB persistent disk at `/app/data` so your SQLite history, caches,
-watchlists, scan output, and X session survive restarts.
-
-In Render, create the service from the Blueprint and set the prompted secrets:
-
-```env
-X_USERNAME=your_x_username_or_email
-X_PASSWORD=your_x_password
-X_EMAIL=optional_email_for_extra_X_verification
-```
-
-The deployed service uses:
-
-```env
-XTS_SESSION_FILE=/app/data/session.json
-XTS_OUTPUT_DIR=/app/data/output
-XTS_CONNECT_HEADLESS=1
-X_LOGIN_METHOD=google
-```
-
-With `XTS_CONNECT_HEADLESS=1`, the dashboard's reconnect button uses
-credential-based headless login instead of trying to open a visible browser in
-the Render container. `X_LOGIN_METHOD=google` keeps the deployment on the
-Google sign-in path you rely on.
-
-Keep one Gunicorn worker for this app. The scraper uses one X session plus a
-single background scheduler, and multiple worker processes would each try to run
-their own scheduler.
-
-### Auto-start on login (macOS)
+Run once:
 
 ```bash
-./install_launchd.sh          # install + start as a login agent
-./install_launchd.sh remove   # uninstall
+./install_launchd.sh
 ```
 
-This keeps the app (and the hourly auto-scan scheduler) running whenever you
-are logged in, restarting it if it crashes. Logs go to `data/launchd.log`.
+This installs a launchd agent that starts the app in the background at login
+and restarts it if it crashes. The dashboard is then always available at
+**http://localhost:8080** — bookmark it. Logs: `data/launchd.log` and
+`data/launchd.err.log`. To uninstall: `./install_launchd.sh remove`.
 
 ## CLI
 
