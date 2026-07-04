@@ -131,3 +131,44 @@ def _run_all():
 
 if __name__ == "__main__":
     _run_all()
+
+
+import asyncio
+
+
+class _FakeLocator:
+    def __init__(self, counts):
+        self._counts = counts  # successive values to return
+        self.calls = 0
+
+    async def count(self):
+        val = self._counts[min(self.calls, len(self._counts) - 1)]
+        self.calls += 1
+        return val
+
+
+class _FakePage:
+    def __init__(self, counts):
+        self._locator = _FakeLocator(counts)
+
+    def locator(self, selector):
+        assert selector == 'article[data-testid="tweet"]'
+        return self._locator
+
+
+def test_wait_for_article_change_returns_on_growth():
+    page = _FakePage([5, 5, 9])
+    result = asyncio.run(scraper._wait_for_article_change(page, prev_count=5, cap_s=2.0))
+    assert result == 9
+
+
+def test_wait_for_article_change_caps_out_when_static():
+    page = _FakePage([5])
+    result = asyncio.run(scraper._wait_for_article_change(page, prev_count=5, cap_s=0.4))
+    assert result == 5  # unchanged after cap — caller's end-of-timeline logic applies
+
+
+def test_wait_for_render_settle_returns_on_stability():
+    page = _FakePage([1, 3, 3])
+    asyncio.run(scraper._wait_for_render_settle(page, cap_s=2.0))
+    assert page._locator.calls >= 3  # needed two consecutive equal nonzero reads

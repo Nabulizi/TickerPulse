@@ -262,6 +262,50 @@ async def _wait_for_first_locator(
     raise last_exc
 
 
+_ARTICLE_SELECTOR = 'article[data-testid="tweet"]'
+
+
+async def _wait_for_article_change(page, prev_count: int, cap_s: float = 1.3) -> int:
+    """
+    Poll the rendered article count until it differs from prev_count, or cap_s
+    elapses. X virtualizes the timeline (offscreen articles are removed from
+    the DOM), so any CHANGE — not just growth — means new content rendered.
+    Worst case equals the old fixed sleep; fast machines advance in ~150 ms.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + cap_s
+    count = prev_count
+    while loop.time() < deadline:
+        try:
+            count = await page.locator(_ARTICLE_SELECTOR).count()
+        except Exception:
+            break  # navigation/context churn — let the caller's logic decide
+        if count != prev_count:
+            break
+        await asyncio.sleep(0.15)
+    return count
+
+
+async def _wait_for_render_settle(page, cap_s: float = 1.5) -> None:
+    """
+    Wait until the article count is stable (two consecutive equal nonzero
+    polls) so the initial viewport has finished painting, capped at cap_s.
+    Replaces a fixed post-load sleep.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + cap_s
+    prev = -1
+    while loop.time() < deadline:
+        try:
+            current = await page.locator(_ARTICLE_SELECTOR).count()
+        except Exception:
+            return
+        if current > 0 and current == prev:
+            return
+        prev = current
+        await asyncio.sleep(0.15)
+
+
 async def _click_first_available(page, locator_builders: list[Callable], timeout: int = 8000) -> bool:
     per_try_timeout = max(800, timeout // max(len(locator_builders), 1))
     for build in locator_builders:
@@ -1018,7 +1062,7 @@ async def _fetch_posts(
 
     # Let the full initial viewport render — wait_for_selector fires on the FIRST
     # article, but React may still be painting the rest of the visible posts.
-    await asyncio.sleep(1.5)
+    await _wait_for_render_settle(page, cap_s=1.5)
 
     follower_count = await _fetch_follower_count(page)
 
@@ -1148,8 +1192,9 @@ async def _fetch_posts(
         if cutoff_hit or stopped_by == "count":
             break
 
+        prev_article_count = await page.locator(_ARTICLE_SELECTOR).count()
         await page.evaluate("window.scrollBy(0, 900)")
-        await asyncio.sleep(1.3)
+        await _wait_for_article_change(page, prev_article_count, cap_s=1.3)
         scrolls += 1
 
     # Sort newest-first. X's timeline is not strictly chronological (pinned posts,
@@ -1282,7 +1327,7 @@ async def scrape_accounts(
                                  "message": f"@{username}: Unexpected error: {exc}"})
                 print(f"[✗] @{username}: {exc}")
 
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(0.8)  # polite pacing between accounts
 
         # Persist any refreshed cookies so the session stays alive between runs,
         # re-pinning whichever UA this context actually used (saved_ua if we had
