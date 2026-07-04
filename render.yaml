@@ -3,7 +3,12 @@ services:
     name: x-ticker-scraper
     runtime: docker
     plan: starter
-    healthCheckPath: /healthz
+    # No healthCheckPath on purpose: during a scan, Chromium consumes the
+    # entire CPU quota on small instances and the web server can't answer
+    # HTTP health checks for minutes — Render then kills the service
+    # mid-scan. Render's default TCP check survives CPU starvation.
+    # (If the service was created from this Blueprint earlier, also clear
+    # "Health Check Path" in the Render dashboard → Settings.)
     disk:
       name: data
       mountPath: /app/data
