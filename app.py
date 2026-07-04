@@ -261,6 +261,17 @@ def debug_x_probe():
     """
     out = {}
 
+    # 0) Container resources — free/starter tiers are tiny; x.com's JS app is heavy.
+    res_info = {"cpu_count": os.cpu_count()}
+    for label, path in (("mem_limit", "/sys/fs/cgroup/memory.max"),
+                        ("mem_current", "/sys/fs/cgroup/memory.current"),
+                        ("cpu_quota", "/sys/fs/cgroup/cpu.max")):
+        try:
+            res_info[label] = Path(path).read_text().strip()
+        except Exception:
+            pass
+    out["resources"] = res_info
+
     # 1) Plain HTTPS fetch — does x.com respond to this host's IP at all?
     try:
         import requests as _rq
@@ -313,6 +324,22 @@ def debug_x_probe():
                 res["signed_in"] = True
             except Exception:
                 res["signed_in"] = False
+            if not res["signed_in"]:
+                # Distinguish "renderer crashed" from "JS just slow on 0.1 CPU":
+                # check the DOM/JS are alive, then keep waiting much longer to
+                # see if hydration eventually completes.
+                try:
+                    res["dom_bytes"] = len(await page.content())
+                    res["js_alive"] = (await page.evaluate("1+1")) == 2
+                except Exception as exc:
+                    res["renderer_error"] = str(exc)[:150]
+                t1 = time.time()
+                try:
+                    await _wait_for_signed_in(page, timeout=90_000)
+                    res["signed_in_after_extra_seconds"] = round(time.time() - t1, 1)
+                    res["signed_in"] = True
+                except Exception:
+                    res["signed_in_after_extra_seconds"] = None
             res["url"] = page.url
             try:
                 res["title"] = await page.title()
