@@ -137,20 +137,12 @@ def test_velocity_endpoint_accepts_share_class_tickers():
         store.DB_PATH = original_db_path
 
 
-def test_refresh_session_raises_without_session_b64():
-    """_refresh_session raises SessionExpired when no XTS_SESSION_B64 is set."""
+def test_refresh_session_always_raises():
+    """Local-only: _refresh_session has no fallback and must raise."""
     import scraper
 
-    original_env = os.environ.get("XTS_SESSION_B64")
-    try:
-        os.environ.pop("XTS_SESSION_B64", None)
-        with pytest.raises(scraper.SessionExpired):
-            asyncio.run(scraper._refresh_session())
-    finally:
-        if original_env is None:
-            os.environ.pop("XTS_SESSION_B64", None)
-        else:
-            os.environ["XTS_SESSION_B64"] = original_env
+    with pytest.raises(scraper.SessionExpired):
+        asyncio.run(scraper._refresh_session())
 
 
 def test_headless_mode_can_prefer_google_login():
@@ -207,7 +199,7 @@ def test_scan_session_save_preserves_user_agent_pin():
         with tempfile.TemporaryDirectory() as tmp:
             scraper.SESSION_FILE = Path(tmp) / "session.json"
             # Seed an existing session that already has a pinned UA, as it
-            # would after a real login or an XTS_SESSION_B64 bootstrap.
+            # would after a real login.
             scraper.SESSION_FILE.write_text(json.dumps({
                 "cookies": [], "origins": [], "_user_agent": "Mozilla/5.0 (pinned)"
             }))

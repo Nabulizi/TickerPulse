@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import json
 import os
 import re
@@ -33,62 +32,6 @@ def _secure_session_file() -> None:
         pass
 
 
-def _bootstrap_session_from_env() -> bool:
-    """
-    Write session.json from the XTS_SESSION_B64 env var.
-
-    Overwrites the existing file when the env var contains a _user_agent
-    field but the on-disk file does not (upgrade path for UA-pinning fix).
-
-    Usage on Render (or any headless server):
-      1. Log in locally: python3 -c "import asyncio; from scraper import _manual_login; asyncio.run(_manual_login())"
-      2. Encode: base64 -i session.json | tr -d '\\n'
-      3. Paste the output as the XTS_SESSION_B64 environment variable on Render.
-      4. Redeploy — the session file is written on first startup.
-
-    Returns True if the session file was written, False otherwise.
-    """
-    raw = os.getenv("XTS_SESSION_B64", "").strip()
-    if not raw:
-        return False
-    # If the file already exists AND already has _user_agent, skip.
-    # Otherwise overwrite so the UA-pinning fix takes effect.
-    if SESSION_FILE.exists():
-        try:
-            existing = json.loads(SESSION_FILE.read_text())
-            if existing.get("_user_agent"):
-                return False  # already up to date
-        except Exception:
-            pass  # corrupted file — overwrite it
-    try:
-        data = base64.b64decode(raw)
-        json.loads(data)  # validate it is well-formed JSON before writing
-        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=SESSION_FILE.parent)
-        try:
-            os.write(fd, data)
-            os.close(fd)
-            os.replace(tmp, str(SESSION_FILE))
-        except Exception:
-            try:
-                os.close(fd)
-            except Exception:
-                pass
-            try:
-                os.unlink(tmp)
-            except Exception:
-                pass
-            raise
-        _secure_session_file()
-        print(f"[✓] Session bootstrapped from XTS_SESSION_B64 → {SESSION_FILE}")
-        return True
-    except Exception as exc:
-        print(f"[!] Failed to bootstrap session from XTS_SESSION_B64: {exc}")
-        return False
-
-
-# Bootstrap on module load so the session is ready before any request is handled.
-_bootstrap_session_from_env()
 
 
 def _emit(progress, msg: dict) -> None:
@@ -762,18 +705,8 @@ async def _save_login_session(*, headless: bool, slow_mo: int = 0, progress=None
 
 
 async def _refresh_session(progress=None) -> None:
-    """
-    Attempt to restore session from XTS_SESSION_B64 env var.
-    If unavailable, raise SessionExpired — the user must paste cookies or
-    import a session.json via the web UI.
-    """
-    if _bootstrap_session_from_env():
-        _emit(progress, {
-            "type": "progress",
-            "message": "Session restored from XTS_SESSION_B64 environment variable.",
-        })
-        return
-
+    """No cached session exists. Local-only app: the user must log in via
+    /connect-x, paste cookies, or import a session.json via the web UI."""
     raise SessionExpired(
         "X session expired or missing. "
         "Paste fresh cookies via the 'Paste Cookies' button or import a session.json file."
