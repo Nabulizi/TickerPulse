@@ -624,11 +624,18 @@
 
     // ── X session ─────────────────────────────────────────────────────────────
 
+    // Whether this server only supports headless X login (Render, etc).
+    // Set once from /session-status; the actual connected/disconnected state
+    // shown in the badge comes from /session-health, which verifies cookies
+    // are actually present and unexpired rather than just "a file exists".
+    let _isHeadlessServer = false;
+
     async function checkXSession() {
       try {
         const data = await fetchJson('/session-status');
-        updateXStatus(data.connected, data.headless);
+        _isHeadlessServer = !!data.headless;
       } catch (e) { /* ignore */ }
+      await checkSessionHealth();
     }
 
     function updateXStatus(connected, headless) {
@@ -786,9 +793,11 @@
         const data = await fetchJson('/session-health');
         const banner = document.getElementById('sessionHealthBanner');
         const msg = document.getElementById('sessionHealthMsg');
-        if (!data.healthy && data.connected) {
-          // Session file exists but cookies are bad
-          msg.textContent = '⚠ ' + data.reason + ' Paste fresh cookies to fix.';
+        // healthy is the real "is X actually usable" signal — a session file
+        // can exist with expired/missing auth cookies and still be unhealthy.
+        updateXStatus(data.healthy, _isHeadlessServer);
+        if (!data.healthy) {
+          msg.textContent = '⚠ ' + (data.reason || 'X session needs attention.') + ' Paste fresh cookies to fix.';
           banner.classList.remove('hidden');
         } else if (data.warning) {
           msg.textContent = '⚠ ' + data.warning;
@@ -796,14 +805,11 @@
         } else {
           banner.classList.add('hidden');
         }
-        if (!data.healthy && !data.connected) {
-          updateXStatus(false);
-        }
       } catch (e) { /* ignore */ }
     }
 
-    // Check session health on load and every 5 minutes
-    checkSessionHealth();
+    // checkXSession() (called on load, below) already runs checkSessionHealth()
+    // once to set the initial badge state; this just keeps it current.
     setInterval(checkSessionHealth, 300000);
 
     // ── Watchlists ────────────────────────────────────────────────────────────
