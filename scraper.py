@@ -782,6 +782,28 @@ def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _date_cutoff_action(posted_at: Optional[str], since_date: Optional[datetime],
+                         is_repost: bool) -> str:
+    """
+    Decide what a date-filtered scan should do with one post.
+
+    Returns "keep", "skip_old" (original post older than since_date),
+    "skip_repost" (repost older than since_date — unreliable original-author
+    date), or "skip_unknown" (posted_at missing/unparseable, e.g. a promoted
+    post with no <time> element — must be dropped rather than kept, otherwise
+    undated content bypasses the time window entirely regardless of its real
+    age).
+    """
+    if not since_date:
+        return "keep"
+    post_dt = _parse_iso(posted_at) if posted_at else None
+    if post_dt is None:
+        return "skip_unknown"
+    if post_dt < since_date:
+        return "skip_repost" if is_repost else "skip_old"
+    return "keep"
+
+
 _NUM_RE = re.compile(r'([\d,.]+)\s*([KMB]?)', re.IGNORECASE)
 _MULT = {"": 1, "K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
 
@@ -1138,28 +1160,33 @@ async def _fetch_posts(
             # A dropped repost does NOT count toward the consecutive-old early-stop,
             # because its (unreliable) original-author date shouldn't halt the scroll
             # before we reach recent original posts further down the timeline.
-            if since_date and posted_at:
-                post_dt = _parse_iso(posted_at)
-                if post_dt and post_dt < since_date:
-                    if url:
-                        seen_urls.add(url)
-                    if is_repost:
-                        # Skip old reposts, keep scrolling — but bound the run so a
-                        # pure-curator timeline doesn't get crawled end to end.
-                        consecutive_old_reposts += 1
-                        if consecutive_old_reposts >= MAX_OLD_REPOST_SKIPS:
-                            cutoff_hit = True
-                            stopped_by = "date"
-                            break
-                        continue
-                    consecutive_old += 1
-                    if consecutive_old == 1:
-                        last_old_date = posted_at
-                    if consecutive_old >= MAX_OLD_SKIPS:
+            # Posts with no readable date (e.g. promoted posts, which render an
+            # "Ad" label instead of a <time>) are dropped too, silently and
+            # without affecting either early-stop counter — an undated post is
+            # neither evidence we've hit old content nor confirmed to be in-window.
+            action = _date_cutoff_action(posted_at, since_date, is_repost)
+            if action != "keep":
+                if url:
+                    seen_urls.add(url)
+                if action == "skip_unknown":
+                    continue
+                if action == "skip_repost":
+                    # Skip old reposts, keep scrolling — but bound the run so a
+                    # pure-curator timeline doesn't get crawled end to end.
+                    consecutive_old_reposts += 1
+                    if consecutive_old_reposts >= MAX_OLD_REPOST_SKIPS:
                         cutoff_hit = True
                         stopped_by = "date"
                         break
                     continue
+                consecutive_old += 1
+                if consecutive_old == 1:
+                    last_old_date = posted_at
+                if consecutive_old >= MAX_OLD_SKIPS:
+                    cutoff_hit = True
+                    stopped_by = "date"
+                    break
+                continue
 
             # ── Get full post text ────────────────────────────────────────────
             # Read the exact rendered text from the live element so emoji, line

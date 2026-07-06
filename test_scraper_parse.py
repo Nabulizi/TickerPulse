@@ -6,6 +6,8 @@ synthetic HTML that mirrors X's article DOM — no browser, no network required.
 Run:  source venv/bin/activate && python3 test_scraper_parse.py
 """
 import asyncio
+from datetime import datetime, timezone
+
 import scraper
 
 
@@ -187,6 +189,43 @@ def test_wait_for_render_settle_caps_out_on_empty_timeline():
     start = _time.monotonic()
     asyncio.run(scraper._wait_for_render_settle(page, cap_s=0.4))
     assert _time.monotonic() - start < 1.0  # capped out, did not hang
+
+
+def test_date_cutoff_no_since_date_always_keeps():
+    assert scraper._date_cutoff_action(None, None, False) == "keep"
+    assert scraper._date_cutoff_action("2020-01-01T00:00:00.000Z", None, False) == "keep"
+
+
+def test_date_cutoff_recent_post_kept():
+    since = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    assert scraper._date_cutoff_action(
+        "2026-06-02T00:00:00.000Z", since, False) == "keep"
+
+
+def test_date_cutoff_old_original_skipped():
+    since = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    assert scraper._date_cutoff_action(
+        "2026-05-30T00:00:00.000Z", since, False) == "skip_old"
+
+
+def test_date_cutoff_old_repost_skipped():
+    since = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    assert scraper._date_cutoff_action(
+        "2026-05-30T00:00:00.000Z", since, True) == "skip_repost"
+
+
+def test_date_cutoff_missing_date_is_not_kept():
+    # Regression: promoted/ad posts render no <time> element, so posted_at is
+    # None even though the post has real text. Previously this bypassed the
+    # date filter entirely (`if since_date and posted_at` short-circuited),
+    # letting undated content of any age through a "last 1 hour" scan.
+    since = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    assert scraper._date_cutoff_action(None, since, False) == "skip_unknown"
+
+
+def test_date_cutoff_unparseable_date_is_not_kept():
+    since = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    assert scraper._date_cutoff_action("not-a-date", since, False) == "skip_unknown"
 
 
 def _run_all():
