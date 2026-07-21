@@ -335,7 +335,7 @@
     let currentResult = null;
     let currentES = null;
     let _digestMode = false;
-    let _preset = { count: 10, since_date: '' };
+    let _presetName = 'custom';
     let _sortState = { col: null, dir: 'desc' };
 
     // ── SVG icon constants ────────────────────────────────────────────────────
@@ -370,6 +370,36 @@
 
     // ── Preset selector ───────────────────────────────────────────────────────
 
+    // Resolves a preset name to { count, since_date, label }, computed against
+    // `now` at CALL time. Presets must be recomputed when the scan actually
+    // runs, not when the button was clicked — otherwise a tab left idle after
+    // picking "1h" silently scans "since I clicked the button", which can be
+    // hours stale by the time Scan is pressed.
+    function presetConfig(name) {
+      const now = new Date();
+      // Per-account post cap scales with the window — a Today scan rarely needs
+      // more than a couple dozen posts, while a 30-day pull may go deeper.
+      if (name === '1h') {
+        const d = new Date(now.getTime() - 60 * 60 * 1000);
+        return { count: 20, since_date: formatLocalDateTime(d), label: `Up to 20 posts · last 1 hour` };
+      } else if (name === '4h') {
+        const d = new Date(now.getTime() - 4 * 60 * 60 * 1000);
+        return { count: 30, since_date: formatLocalDateTime(d), label: `Up to 30 posts · last 4 hours` };
+      } else if (name === 'today') {
+        return { count: 40, since_date: formatLocalDate(now), label: `Up to 40 posts · since ${formatLocalDate(now)}` };
+      } else if (name === '3d') {
+        const d = new Date(now); d.setDate(d.getDate() - 3);
+        return { count: 70, since_date: formatLocalDate(d), label: `Up to 70 posts · since ${formatLocalDate(d)}` };
+      } else if (name === '7d') {
+        const d = new Date(now); d.setDate(d.getDate() - 7);
+        return { count: 100, since_date: formatLocalDate(d), label: `Up to 100 posts · since ${formatLocalDate(d)}` };
+      } else if (name === '30d') {
+        const d = new Date(now); d.setDate(d.getDate() - 30);
+        return { count: 200, since_date: formatLocalDate(d), label: `Up to 200 posts · since ${formatLocalDate(d)}` };
+      }
+      return null; // custom — caller reads count/since_date from the manual inputs
+    }
+
     function applyPreset(name) {
       // Highlight active button
       document.querySelectorAll('.preset-btn').forEach(b => {
@@ -381,42 +411,12 @@
       const customControls = document.getElementById('customControls');
       const label = document.getElementById('presetLabel');
 
-      const today = new Date();
-
-      // Per-account post cap scales with the window — a Today scan rarely needs
-      // more than a couple dozen posts, while a 30-day pull may go deeper.
-      if (name === '1h') {
-        const d = new Date(today.getTime() - 60 * 60 * 1000);
-        _preset = { count: 20, since_date: formatLocalDateTime(d) };
+      _presetName = name;
+      const cfg = presetConfig(name);
+      if (cfg) {
         customControls.classList.add('hidden');
-        label.textContent = `Up to 20 posts · last 1 hour`;
-      } else if (name === '4h') {
-        const d = new Date(today.getTime() - 4 * 60 * 60 * 1000);
-        _preset = { count: 30, since_date: formatLocalDateTime(d) };
-        customControls.classList.add('hidden');
-        label.textContent = `Up to 30 posts · last 4 hours`;
-      } else if (name === 'today') {
-        _preset = { count: 40, since_date: formatLocalDate(today) };
-        customControls.classList.add('hidden');
-        label.textContent = `Up to 40 posts · since ${formatLocalDate(today)}`;
-      } else if (name === '3d') {
-        const d = new Date(today); d.setDate(d.getDate() - 3);
-        _preset = { count: 70, since_date: formatLocalDate(d) };
-        customControls.classList.add('hidden');
-        label.textContent = `Up to 70 posts · since ${formatLocalDate(d)}`;
-      } else if (name === '7d') {
-        const d = new Date(today); d.setDate(d.getDate() - 7);
-        _preset = { count: 100, since_date: formatLocalDate(d) };
-        customControls.classList.add('hidden');
-        label.textContent = `Up to 100 posts · since ${formatLocalDate(d)}`;
-      } else if (name === '30d') {
-        const d = new Date(today); d.setDate(d.getDate() - 30);
-        _preset = { count: 200, since_date: formatLocalDate(d) };
-        customControls.classList.add('hidden');
-        label.textContent = `Up to 200 posts · since ${formatLocalDate(d)}`;
+        label.textContent = cfg.label;
       } else {
-        // custom — show the manual controls, clear preset state
-        _preset = { count: null, since_date: null }; // will read from inputs
         customControls.classList.remove('hidden');
         label.textContent = '';
       }
@@ -438,11 +438,13 @@
         return;
       }
 
-      // Resolve count + since_date from preset or custom inputs
+      // Resolve count + since_date from preset (recomputed now, not at the time
+      // the preset button was clicked) or custom inputs
       let count, since_date;
-      if (_preset.count !== null) {
-        count = _preset.count;
-        since_date = _preset.since_date;
+      const cfg = presetConfig(_presetName);
+      if (cfg) {
+        count = cfg.count;
+        since_date = cfg.since_date;
       } else {
         count = parseInt(document.getElementById('postCount').value) || 10;
         since_date = document.getElementById('sinceDate').value || '';
